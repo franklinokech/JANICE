@@ -1,0 +1,8 @@
+# Default owner for everything in the repository
+*                     @franklinokech
+
+# Areas that need extra care once the team grows
+/pipeline/            @franklinokech
+/deploy/              @franklinokech
+/.github/             @franklinokech
+/docs/design/         @franklinokech
