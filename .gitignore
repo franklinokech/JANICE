@@ -99,7 +99,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-# uv.lock
+uv.lock
 
 # poetry
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
@@ -221,3 +221,55 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# JANICE specific ignore files
+# --- Secrets and local config: never commit ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# --- Data: never commit patient or extract data ---
+*.duckdb
+*.duckdb.wal
+*.parquet
+*.csv
+*.xlsx
+*.sav
+*.dta
+*.rds
+*.RData
+data/
+!tests/fixtures/**/*.csv
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# --- Node / Vue ---
+node_modules/
+dist/
+
+# --- R ---
+.Rhistory
+.Rproj.user/
+renv/library/
+
+# --- dbt ---
+target/
+dbt_packages/
+logs/
+
+# --- Editors and OS ---
+.vscode/
+.idea/
+.DS_Store

@@ -1,2 +1,31 @@
 # JANICE
-JANICE (Just-in-time Analytics for Network Improvement and Clinical Evaluation): a chat assistant that helps clinical teams and hospital administrators explore quality improvement data from the Clinical Information Network.
+
+**Just-in-time Analytics for Network Improvement and Clinical Evaluation**
+
+A chat assistant that helps clinical teams and hospital administrators explore
+quality improvement data from the Clinical Information Network (CIN).
+
+> Status: Sprint 0, foundations. Not yet usable.
+
+## Documentation
+
+- [System design](docs/design/system-design.md)
+- [Architecture decision records](docs/adr/)
+- [Contributing and git workflow](CONTRIBUTING.md)
+
+## Repository layout (planned)
+
+| Folder | Contents |
+| --- | --- |
+| `backend/` | Django API, chat loop, MCP server |
+| `frontend/` | Vue 3 app |
+| `pipeline/` | Dagster, R extract, dbt project |
+| `deploy/` | Docker Compose, nginx, Ansible |
+| `docs/` | Design doc, ADRs, runbooks |
+
+Folders are added as each component is built.
+
+## Data handling
+
+This repository must never contain patient data, REDCap exports, API tokens
+or hashing keys. Development uses synthetic data only.
