@@ -8,6 +8,7 @@ the project, so it is a secret: it never appears in errors, logs or repr().
 REDCap API docs: on your REDCap server, under "API" -> "API Documentation".
 """
 
+from collections.abc import Iterator, Sequence
 from urllib.parse import urlparse
 
 import httpx
@@ -15,6 +16,12 @@ import httpx
 from janice_pipeline.synthetic.dictionary import Field, fields_from_rows
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
+
+DEFAULT_BATCH_SIZE = 500
+
+# Export codes, not labels ("1", not "Alive"), in one row per record or repeat
+# instance. Labels can be edited in REDCap at any time; codes are stable.
+RAW_FLAT = {"type": "flat", "rawOrLabel": "raw", "rawOrLabelHeaders": "raw"}
 
 
 class RedcapError(Exception):
@@ -46,6 +53,41 @@ class RedcapClient:
         """The project's data dictionary, as fields in order."""
         return fields_from_rows(self._post({"content": "metadata"}))
 
+    def export_record_ids(self, record_id_field: str) -> list[str]:
+        """Every record ID in the project, in REDCap's order, each once."""
+        rows = self._post(
+            {"content": "record", **RAW_FLAT, **_as_list("fields", [record_id_field])}
+        )
+        # dict.fromkeys drops repeats (a record with repeating instruments comes
+        # back once per instance) and, unlike set(), keeps the order
+        return list(dict.fromkeys(row[record_id_field] for row in rows))
+
+    def export_records(
+        self, record_ids: Sequence[str], *, batch_size: int = DEFAULT_BATCH_SIZE
+    ) -> Iterator[list[dict[str, str]]]:
+        """The records with these IDs, as one list of rows per batch of IDs.
+
+        Returns a generator: each batch is requested only when the caller asks for it,
+        so only one batch is in memory at a time, however large the project.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        return self._record_batches(record_ids, batch_size)
+
+    def _record_batches(
+        self, record_ids: Sequence[str], batch_size: int
+    ) -> Iterator[list[dict[str, str]]]:
+        for start in range(0, len(record_ids), batch_size):
+            batch = record_ids[start : start + batch_size]
+            yield self._post(
+                {
+                    "content": "record",
+                    **RAW_FLAT,
+                    "exportCheckboxLabel": "false",
+                    **_as_list("records", batch),
+                }
+            )
+
     def _post(self, params: dict[str, str]) -> list[dict[str, str]]:
         data = {"token": self._token, "format": "json", "returnFormat": "json", **params}
         try:
@@ -61,6 +103,11 @@ class RedcapClient:
             return response.json()
         except ValueError:
             raise RedcapError("REDCap response was not valid JSON") from None
+
+
+def _as_list(name: str, values: Sequence[str]) -> dict[str, str]:
+    """A list in the form REDCap (PHP) reads: name[0]=a, name[1]=b ..."""
+    return {f"{name}[{i}]": value for i, value in enumerate(values)}
 
 
 def _error_message(response: httpx.Response) -> str:
