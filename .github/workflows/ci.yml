@@ -166,3 +166,26 @@ jobs:
 
       - name: Check the image runs as the non-root user
         run: test "$(docker run --rm --entrypoint whoami janice-frontend:ci)" = "nginx"
+
+  pipeline:
+    name: Pipeline tests
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          working-directory: pipeline
+          enable-cache: true
+          cache-dependency-glob: pipeline/uv.lock
+
+      - name: Install dependencies exactly as locked
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest

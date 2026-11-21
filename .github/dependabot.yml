@@ -22,7 +22,9 @@ updates:
 
   # Python packages in backend/pyproject.toml and backend/uv.lock
   - package-ecosystem: "uv"
-    directory: "/backend"
+    directories:
+      - "/backend"
+      - "/pipeline"
     schedule:
       interval: "weekly"
       day: "monday"
