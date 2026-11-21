@@ -14,7 +14,7 @@ COPY . .
 RUN npm run build-only
 
 # ---------- Stage 2: serve it with nginx as a non-root user ----------
-FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
 
 COPY nginx/default.conf nginx/proxy-hide-headers.inc /etc/nginx/conf.d/
 COPY --from=build /app/dist /usr/share/nginx/html
