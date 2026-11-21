@@ -140,3 +140,103 @@ def test_error_responses_that_are_not_an_error_object_are_still_reported():
 
     with pytest.raises(RedcapError, match="HTTP 400"):
         client.export_metadata()
+
+
+# --- Record export ---------------------------------------------------------
+# Records are exported in two steps, so a large project never has to fit in
+# one request or in memory: first the record IDs alone, then the records a
+# batch of IDs at a time.
+
+
+def test_export_record_ids_asks_only_for_the_record_id_field_in_raw_flat_form():
+    seen = {}
+
+    def handler(request):
+        seen.update(form_data(request))
+        return httpx.Response(200, json=[{"record_id": "1"}])
+
+    fake_redcap(handler).export_record_ids("record_id")
+
+    assert seen["content"] == "record"
+    assert seen["type"] == "flat"
+    assert seen["rawOrLabel"] == "raw"
+    # PHP (REDCap) only reads lists sent as name[0], name[1] ...
+    assert seen["fields[0]"] == "record_id"
+
+
+def test_export_record_ids_keeps_redcap_order_and_drops_repeat_rows():
+    # A record with repeating instruments (maternity's previous pregnancies)
+    # comes back once per repeat instance, so its ID appears more than once
+    rows = [
+        {"record_id": "10", "redcap_repeat_instrument": "", "redcap_repeat_instance": ""},
+        {"record_id": "10", "redcap_repeat_instrument": "prev_preg", "redcap_repeat_instance": "1"},
+        {"record_id": "10", "redcap_repeat_instrument": "prev_preg", "redcap_repeat_instance": "2"},
+        {"record_id": "2", "redcap_repeat_instrument": "", "redcap_repeat_instance": ""},
+    ]
+    client = fake_redcap(lambda request: httpx.Response(200, json=rows))
+
+    assert client.export_record_ids("record_id") == ["10", "2"]
+
+
+def test_export_records_sends_each_batch_of_ids_as_a_list():
+    requests = []
+
+    def handler(request):
+        data = form_data(request)
+        requests.append(data)
+        ids = [v for k, v in sorted(data.items()) if k.startswith("records[")]
+        return httpx.Response(200, json=[{"record_id": i} for i in ids])
+
+    batches = list(fake_redcap(handler).export_records(["1", "2", "3", "4", "5"], batch_size=2))
+
+    assert [[r["record_id"] for r in b] for b in batches] == [["1", "2"], ["3", "4"], ["5"]]
+    assert len(requests) == 3
+    assert requests[0]["records[0]"] == "1"
+    assert requests[0]["records[1]"] == "2"
+    assert requests[0]["content"] == "record"
+    assert requests[0]["rawOrLabel"] == "raw"
+    assert requests[0]["exportCheckboxLabel"] == "false"
+
+
+def test_export_records_fetches_one_batch_at_a_time():
+    # A generator: the next batch is only requested once the caller asks for it,
+    # so only one batch is ever held in memory
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(200, json=[])
+
+    batches = fake_redcap(handler).export_records(["1", "2", "3"], batch_size=1)
+    assert calls == []
+    next(batches)
+    assert len(calls) == 1
+
+
+def test_export_records_with_no_ids_makes_no_requests():
+    def handler(request):
+        raise AssertionError("no request expected")
+
+    assert list(fake_redcap(handler).export_records([], batch_size=100)) == []
+
+
+def test_batch_size_must_be_at_least_one():
+    client = fake_redcap(lambda request: httpx.Response(200, json=[]))
+
+    # Checked straight away, not on the first batch, so the mistake shows up
+    # where it was made
+    with pytest.raises(ValueError, match="batch_size"):
+        client.export_records(["1"], batch_size=0)
+
+
+def test_a_failed_batch_stops_the_export_with_a_redcap_error():
+    def handler(request):
+        if form_data(request)["records[0]"] == "3":
+            return httpx.Response(500, json={"error": "Server overloaded"})
+        return httpx.Response(200, json=[{"record_id": "1"}])
+
+    batches = fake_redcap(handler).export_records(["1", "2", "3"], batch_size=2)
+
+    next(batches)
+    with pytest.raises(RedcapError, match="Server overloaded"):
+        next(batches)
