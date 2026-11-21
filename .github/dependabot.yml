@@ -1,0 +1,66 @@
+# Dependabot: weekly pull requests to keep pinned dependencies up to date.
+# Docs: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+version: 2
+
+updates:
+  # GitHub Actions in .github/workflows (updates the pinned SHAs and their version comments)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule: &weekly
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Nairobi"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  # Python packages in backend/pyproject.toml and backend/uv.lock
+  - package-ecosystem: "uv"
+    directory: "/backend"
+    schedule: *weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "build"
+      include: "scope"
+    groups:
+      python-minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  # Base images in backend/Dockerfile
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule: *weekly
+    commit-message:
+      prefix: "build"
+    ignore:
+      # Python upgrades (3.13 -> 3.14) are deliberate: they also need
+      # .python-version and requires-python changed together
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+
+  # Images in compose.yaml
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule: *weekly
+    commit-message:
+      prefix: "build"
+    ignore:
+      # A Postgres major upgrade (18 -> 19) needs a dump and restore: plan it, don't auto-bump
+      - dependency-name: "postgres"
+        update-types: ["version-update:semver-major"]
+
+  # Hook versions in .pre-commit-config.yaml
+  - package-ecosystem: "pre-commit"
+    directory: "/"
+    schedule: *weekly
+    commit-message:
+      prefix: "chore"
+    groups:
+      pre-commit-hooks:
+        patterns: ["*"]
