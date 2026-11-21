@@ -39,7 +39,9 @@ updates:
 
   # Base images in backend/Dockerfile
   - package-ecosystem: "docker"
-    directory: "/backend"
+    directories:
+      - "/backend"
+      - "/frontend"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -52,6 +54,9 @@ updates:
       # .python-version and requires-python changed together
       - dependency-name: "python"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Node major upgrades (24 -> 26) are deliberate: .nvmrc changes too
+      - dependency-name: "node"
+        update-types: [ "version-update:semver-major" ]
 
   # Images in compose.yaml
   - package-ecosystem: "docker-compose"

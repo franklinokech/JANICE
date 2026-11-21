@@ -13,6 +13,15 @@ quality improvement data from the Clinical Information Network (CIN).
 - [Architecture decision records](docs/adr/)
 - [Contributing and git workflow](CONTRIBUTING.md)
 
+## Run the whole stack
+
+```bash
+cp .env.example .env        # once; fill in the secrets
+docker compose up -d --build
+```
+
+Open http://localhost:8088: nginx serves the app and forwards `/api/` to Django.
+
 ## Repository layout (planned)
 
 | Folder | Contents |
