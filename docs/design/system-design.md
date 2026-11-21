@@ -126,7 +126,7 @@ JANICE loads the pooled CIN data once in full, then pulls only records created o
 
 &#91;embedded content: ingestion data flow · identifiers hashed before the warehouse\]
 
-Only the transient DuckDB staging file ever holds cleartext identifiers; it sits on an encrypted volume and is deleted once the hashed load succeeds.
+**Hashed before staging.** Each batch of records is hashed in memory before it is written, so no file, not even the DuckDB staging file, ever holds cleartext identifiers. Cleartext exists only in the pipeline's memory, one batch at a time. Flagged free-text and checkbox fields are dropped rather than hashed. The staging file holds every value as text, exactly as REDCap sent it, and each unit's table is rebuilt in one transaction, so a failed run leaves the previous table intact. Tests check that no cleartext identifier reaches the file.
 
 **REDCap server time.** REDCap reads `dateRangeBegin` in its server's local time, with no time zone attached. The KWTRP REDCap server runs on UTC (confirmed in the Control Center, 21 Nov 2026), while Nairobi is UTC+3. The pipeline keeps every watermark as a time-zone-aware datetime and converts it to the zone in `REDCAP_SERVER_TIMEZONE` (default `UTC`) before sending it; a time with no zone is refused, because a wrong conversion would silently skip hours of changes. Times in REDCap's own logs are UTC too.
 
@@ -649,7 +649,7 @@ Only the app database holds data that exists nowhere else, so it gets continuous
 | Volume | Backed up? | Method | Frequency | Retention |
 | --- | --- | --- | --- | --- |
 | `postgres-data` | Yes | pgBackRest: weekly full, daily differential, continuous WAL archiving, encrypted | Continuous | 4 weekly fulls, then monthly for 12 months |
-| `pipeline-staging` (cleartext) | **Never** | Excluded on purpose; wiped after each run | n/a | n/a |
+| `pipeline-staging` (hashed, rebuildable) | **Never** | Excluded on purpose: rebuilt from REDCap on every run | n/a | n/a |
 | `redis` | No | Cache and queue only; rebuilt on start | n/a | n/a |
 | `dagster` state | Via Postgres | Lives in the Postgres backup | n/a | n/a |
 | Prometheus, Loki | No | Accept loss; dashboards are code in git | n/a | n/a |
@@ -677,7 +677,7 @@ JANICE handles health data, which Kenya's Data Protection Act 2019 treats as sen
 | Control | Where | Detail |
 | --- | --- | --- |
 | Identifier hashing | Pipeline (DuckDB staging) | HMAC-SHA256 with a secret key on every metadata-flagged identifier; free-text identifiers dropped; run stops if flags change (see Data ingestion) |
-| Cleartext exposure | Pipeline | Staging file on an encrypted volume, deleted after each successful load, never backed up |
+| Cleartext exposure | Pipeline | Identifiers hashed in memory before staging, so no file holds cleartext (tested); staging volume still encrypted and never backed up |
 | Least privilege | Postgres | Separate roles: loader (write `raw`), dbt (write `stg` to `qi`), `janice_app` (read `qi` and `marts`, no `BYPASSRLS`) |
 | Role-based access | Django, MCP tools | Seven roles; permissions checked on every endpoint and tool (see Access control) |
 | Row-level security | Postgres | Policies on `qi` and `marts` tied to the user's scope grants |
