@@ -9,7 +9,9 @@ REDCap API docs: on your REDCap server, under "API" -> "API Documentation".
 """
 
 from collections.abc import Iterator, Sequence
+from datetime import datetime
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -18,6 +20,10 @@ from janice_pipeline.synthetic.dictionary import Field, fields_from_rows
 DEFAULT_TIMEOUT_SECONDS = 120.0
 
 DEFAULT_BATCH_SIZE = 500
+
+# REDCap reads dateRangeBegin in its server's local time. The KWTRP server
+# runs on UTC (Control Center, 21 Nov 2026); other servers may differ.
+DEFAULT_SERVER_TIMEZONE = "UTC"
 
 # Export codes, not labels ("1", not "Alive"), in one row per record or repeat
 # instance. Labels can be edited in REDCap at any time; codes are stable.
@@ -37,12 +43,14 @@ class RedcapClient:
         token: str,
         *,
         timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        server_timezone: str = DEFAULT_SERVER_TIMEZONE,
         transport: httpx.BaseTransport | None = None,
     ):
         if urlparse(url).scheme != "https":
             raise ValueError("REDCap API URL must use https, so the token is never sent in clear")
         self.url = url
         self._token = token
+        self.server_timezone = ZoneInfo(server_timezone)
         # transport is only passed in tests, to replace the network with a fake server
         self._http = httpx.Client(timeout=timeout, transport=transport)
 
@@ -53,11 +61,19 @@ class RedcapClient:
         """The project's data dictionary, as fields in order."""
         return fields_from_rows(self._post({"content": "metadata"}))
 
-    def export_record_ids(self, record_id_field: str) -> list[str]:
-        """Every record ID in the project, in REDCap's order, each once."""
-        rows = self._post(
-            {"content": "record", **RAW_FLAT, **_as_list("fields", [record_id_field])}
-        )
+    def export_record_ids(
+        self, record_id_field: str, *, changed_since: datetime | None = None
+    ) -> list[str]:
+        """Record IDs in REDCap's order, each once.
+
+        All records, or with ``changed_since`` only those created or changed
+        after that moment. It must carry a time zone, so it means one moment
+        wherever the pipeline runs.
+        """
+        params = {"content": "record", **RAW_FLAT, **_as_list("fields", [record_id_field])}
+        if changed_since is not None:
+            params["dateRangeBegin"] = self._server_time(changed_since)
+        rows = self._post(params)
         # dict.fromkeys drops repeats (a record with repeating instruments comes
         # back once per instance) and, unlike set(), keeps the order
         return list(dict.fromkeys(row[record_id_field] for row in rows))
@@ -103,6 +119,11 @@ class RedcapClient:
             return response.json()
         except ValueError:
             raise RedcapError("REDCap response was not valid JSON") from None
+
+    def _server_time(self, moment: datetime) -> str:
+        if moment.tzinfo is None or moment.utcoffset() is None:
+            raise ValueError("changed_since needs a time zone, e.g. datetime.now(UTC)")
+        return moment.astimezone(self.server_timezone).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _as_list(name: str, values: Sequence[str]) -> dict[str, str]:

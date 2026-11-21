@@ -7,7 +7,9 @@ network connection or a real token.
 REDCap API docs: on your REDCap server, under "API" -> "API Documentation".
 """
 
+from datetime import UTC, datetime
 from urllib.parse import parse_qs
+from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
@@ -240,3 +242,60 @@ def test_a_failed_batch_stops_the_export_with_a_redcap_error():
     next(batches)
     with pytest.raises(RedcapError, match="Server overloaded"):
         next(batches)
+
+
+# --- Incremental export ----------------------------------------------------
+# On a normal day only records created or changed since the last run are
+# fetched, using REDCap's dateRangeBegin. REDCap reads that time in the
+# server's own time zone, as "YYYY-MM-DD HH:MM:SS".
+
+
+def test_without_changed_since_all_record_ids_are_requested():
+    seen = {}
+
+    def handler(request):
+        seen.update(form_data(request))
+        return httpx.Response(200, json=[])
+
+    fake_redcap(handler).export_record_ids("record_id")
+
+    assert "dateRangeBegin" not in seen
+
+
+def test_changed_since_is_sent_in_the_servers_time_zone():
+    seen = {}
+
+    def handler(request):
+        seen.update(form_data(request))
+        return httpx.Response(200, json=[])
+
+    # Midnight in Nairobi (UTC+3) is 21:00 the day before on a UTC server,
+    # the default (the KWTRP REDCap server runs on UTC)
+    since = datetime(2026, 11, 21, 0, 0, tzinfo=ZoneInfo("Africa/Nairobi"))
+    fake_redcap(handler).export_record_ids("record_id", changed_since=since)
+
+    assert seen["dateRangeBegin"] == "2026-11-20 21:00:00"
+
+
+def test_the_server_time_zone_can_be_changed():
+    seen = {}
+
+    def handler(request):
+        seen.update(form_data(request))
+        return httpx.Response(200, json=[])
+
+    client = RedcapClient(
+        URL, TOKEN, server_timezone="Africa/Nairobi", transport=httpx.MockTransport(handler)
+    )
+    client.export_record_ids("record_id", changed_since=datetime(2026, 11, 20, 21, 0, tzinfo=UTC))
+
+    assert seen["dateRangeBegin"] == "2026-11-21 00:00:00"
+
+
+def test_a_time_without_a_time_zone_is_refused():
+    # "18:00" means different moments on the laptop, in CI and on the server;
+    # guessing could silently skip a few hours of changed records
+    client = fake_redcap(lambda request: httpx.Response(200, json=[]))
+
+    with pytest.raises(ValueError, match="time zone"):
+        client.export_record_ids("record_id", changed_since=datetime(2026, 11, 20, 18, 0))

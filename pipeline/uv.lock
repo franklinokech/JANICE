@@ -880,6 +880,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dagster" },
     { name = "httpx" },
+    { name = "tzdata" },
 ]
 
 [package.dev-dependencies]
@@ -893,6 +894,7 @@ dev = [
 requires-dist = [
     { name = "dagster", specifier = ">=1.13.31" },
     { name = "httpx", specifier = ">=0.28.1" },
+    { name = "tzdata", specifier = ">=2026.6" },
 ]
 
 [package.metadata.requires-dev]
