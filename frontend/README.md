@@ -25,3 +25,9 @@ npm run lint
 npm run format:check
 npm run build
 ```
+
+## Docker
+
+The image builds the app with Node, then serves `dist/` with nginx
+(non-root, port 8080). nginx also proxies `/api/` and `/admin/` to the
+`backend` service. Configuration: `nginx/default.conf`.
