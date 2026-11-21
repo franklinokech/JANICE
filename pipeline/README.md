@@ -27,3 +27,13 @@ uv run janice-synthetic --dictionary path/to/dictionary.csv \
 
 Not yet handled: branching logic, repeating instruments, and cross-field
 rules (e.g. discharge after admission).
+
+## Dagster
+
+```bash
+uv run dg check defs    # validate the definitions
+uv run dg list defs     # list assets
+uv run dg dev           # local UI at http://localhost:3000
+```
+
+Assets so far: `synthetic_redcap_export` (group `synthetic`).

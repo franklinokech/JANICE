@@ -2,7 +2,7 @@
 
 **Just-in-time Analytics for Network Improvement and Clinical Evaluation**
 
-*Last updated: 20 Nov 2026 · Author: Franklin Okech*
+*Last updated: 21 Nov 2026 · Author: Franklin Okech*
 
 ## Overview
 
@@ -73,7 +73,7 @@ At each site, unit staff transcribe paper forms (maternity, neonatal, paediatric
 | Record grain | Confirmed | Three pooled classic projects, one per unit (paediatrics, neonatal, maternity); maternity has repeating instruments such as previous pregnancies |
 | Refresh cadence | Confirmed | Sites sync manually once a day, at no fixed time; freshness is measured per site from the REDCap audit log |
 | Data dictionary | Confirmed source | Exported on every run and versioned by JANICE |
-| Identifier flags | To audit | Check once with the CIN data managers that every direct identifier is flagged, including free-text fields |
+| Identifier flags | Unreliable: reviewed list required | Neonatal dictionary (21 Nov 2026): weight, length and head circumference are flagged as identifiers; no names, inpatient numbers or dates of birth are flagged. JANICE uses a reviewed identifier list per project instead of the raw flags |
 
 ### Implications for the design
 
@@ -89,10 +89,10 @@ At each site, unit staff transcribe paper forms (maternity, neonatal, paediatric
 
   | Admin model | Fields | Rules |
   | --- | --- | --- |
-  | REDCap project | Unit, API URL, name of the secret holding the token (never the token itself), site field name (default `hosp_id`), identifier allowlist, active | One per unit; changes take effect at the next pipeline run |
+  | REDCap project | Unit, API URL, name of the secret holding the token (never the token itself), site field name (default `hosp_id`), reviewed identifier list (flags kept, fields removed, fields added, last review date and reviewer), active | One per unit; changes take effect at the next pipeline run |
   | Hospital | `hosp_id` value, hospital name, county, country, active, date joined CIN | `hosp_id` unique per project; county must exist in the access hierarchy |
 
-  Saving a hospital creates or updates its node in the access hierarchy, so RLS, indicators and the admin all use one list. dbt reads the hospital table as a source to build `dim_site`; a Dagster sensor rebuilds the affected models when the table changes. A dbt test fails if a record arrives with a site value missing from the list, and the run alerts the data managers to add it. Every change is in the audit log. If `hosp_id` is ever flagged as an identifier, the allowlist keeps it in clear text, because hashing it would break site filtering.
+  Saving a hospital creates or updates its node in the access hierarchy, so RLS, indicators and the admin all use one list. dbt reads the hospital table as a source to build `dim_site`; a Dagster sensor rebuilds the affected models when the table changes. A dbt test fails if a record arrives with a site value missing from the list, and the run alerts the data managers to add it. Every change is in the audit log. If `hosp_id` is ever flagged as an identifier, the reviewed list removes it, keeping it in clear text, because hashing it would break site filtering.
 - **Linking mother and baby.** Because all three projects are hashed with the same key, maternity and neonatal records could be linked on a shared identifier. That raises re-identification risk, so it stays off until the data governance group approves it.
 
 ### Freshness with manual daily syncs
@@ -177,13 +177,15 @@ The watermark is the run's start time in the REDCap server's time zone, stored i
 
 ### Identifier hashing
 
-1. **Find identifiers.** Each run exports the data dictionary and takes every field where the REDCap `identifier` flag is set.
+1. **Find identifiers.** Each run exports the data dictionary and applies the project's **reviewed identifier list**: the fields REDCap flags as identifiers, minus fields the data managers have marked as not identifying (such as clinical measurements), plus fields they have marked as identifying that REDCap does not flag.
 2. **Hash.** In DuckDB, replace each identifier value with `HMAC-SHA256(key, normalised value)`. Normalise first (trim, lower-case, strip spaces from phone numbers) so the same person hashes the same way across admissions.
 3. **Keep the key out of the data.** The HMAC key lives in the secrets store, never in the database or the repository. A plain SHA-256 hash is not enough: names, phone numbers and inpatient numbers come from small sets of possible values and can be reversed by trying them all, which a secret key prevents.
 4. **Drop what has no analytic use.** Hashed free text is useless, so free-text identifier fields are dropped rather than hashed. Dates of birth become age at admission in `stg`.
 5. **Load.** Upsert into `raw`, keyed on project, record ID, repeating instrument and instance.
 
-If a field's identifier flag changes between runs, the run stops and alerts the data managers rather than loading a newly unflagged field in cleartext.
+If the dictionary's identifier flags, or its list of fields, differ from those recorded when the list was last reviewed, the run stops and alerts the data managers until they review the change. A new or newly unflagged field is never loaded in cleartext by default.
+
+Why a reviewed list: in the real neonatal dictionary, REDCap's flags were wrong in both directions. Weight, length and head circumference were flagged (hashing them would destroy data the indicators need), while no names, inpatient numbers or dates of birth were flagged. The full field list is reviewed with the CIN data managers, and the KWTRP data protection officer where possible, before any real data is loaded.
 
 ### Orchestration with Dagster
 
@@ -192,7 +194,7 @@ Use open-source Dagster, self-hosted, from the first sprint. It models the pipel
 | Asset or check | Runs | Implementation |
 | --- | --- | --- |
 | `redcap_metadata` | Each run | Python asset; exports and versions the data dictionary |
-| Identifier-flag check | Each run | Asset check; fails and blocks the run if identifier flags changed |
+| Identifier-flag check | Each run | Asset check; fails and blocks the run if identifier flags or fields changed since the identifier list was last reviewed |
 | `redcap_extract` | Each run | R script calling `redquack`, launched by Dagster's `PipesSubprocessClient` so its logs and status flow back into Dagster |
 | `hashed_staging` and `raw_*` | Each run | Python asset: DuckDB hashing, then the load into Postgres |
 | dbt models | Each run | `dagster-dbt`: every dbt model becomes an asset, and dbt tests show as asset checks |
@@ -254,6 +256,8 @@ Each indicator also reports its documentation completeness (share of the denomin
 - A source freshness check that fails the run if the extract is older than the agreed threshold.
 - A test that fails when the REDCap data dictionary changes a field an indicator depends on.
 - Statistical process control (SPC) limits computed in dbt (e.g. p-chart limits per indicator), so the chat can say whether a change is a signal or noise.
+
+**Unvalidated dates.** About 120 date and time fields in the neonatal dictionary (for example `amikacin_date`, `date_1` to `date_18`, `cpap_start_time`) are free-text fields with no REDCap validation, so they can hold anything. Staging models parse them explicitly, and a dbt test reports the share of values that do not parse, per site and month. Report this to the CIN data managers, so validation can be added at the source.
 
 A full semantic layer (dbt MetricFlow) is not needed for the pilot: a pre-aggregated indicator table plus a catalogue gives the same safety with less to run. Revisit if users need ad hoc slicing by many dimensions.
 
@@ -571,7 +575,7 @@ gitGraph
 | --- | --- |
 | `feature/*` | Your laptop (synthetic data only) |
 | `develop`, `release/*` | Staging server, automatically |
-| `main` (tagged) | Production at KWTRP, after approval, through KWTRP IT's process |
+| `main` (tagged) | Production at KWTRP, after approval, through KWTRP IT's deployment process |
 
 ### Environments
 
