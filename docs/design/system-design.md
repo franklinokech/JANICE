@@ -1,8 +1,6 @@
-# JANICE Design Document
+# JANICE: Just-in-time Analytics for Network Improvement and Clinical Evaluation — Design Document
 
-**Just-in-time Analytics for Network Improvement and Clinical Evaluation**
-
-*Last updated: 21 Nov 2026 · Author: Franklin Okech*
+Nov 19, 2026 · @Franklin Okech
 
 ## Overview
 
@@ -73,7 +71,7 @@ At each site, unit staff transcribe paper forms (maternity, neonatal, paediatric
 | Record grain | Confirmed | Three pooled classic projects, one per unit (paediatrics, neonatal, maternity); maternity has repeating instruments such as previous pregnancies |
 | Refresh cadence | Confirmed | Sites sync manually once a day, at no fixed time; freshness is measured per site from the REDCap audit log |
 | Data dictionary | Confirmed source | Exported on every run and versioned by JANICE |
-| Identifier flags | Unreliable: reviewed list required | Neonatal dictionary (21 Nov 2026): weight, length and head circumference are flagged as identifiers; no names, inpatient numbers or dates of birth are flagged. JANICE uses a reviewed identifier list per project instead of the raw flags |
+| Identifier flags | Trusted; neonatal corrected | JANICE hashes the fields REDCap flags. Neonatal (21 Nov 2026): weight, length and head circumference were wrongly flagged and have been unflagged in REDCap; location fields remain flagged. Still to confirm: whether any names, inpatient numbers or dates of birth exist unflagged, and the paediatric and maternity flags |
 
 ### Implications for the design
 
@@ -89,10 +87,10 @@ At each site, unit staff transcribe paper forms (maternity, neonatal, paediatric
 
   | Admin model | Fields | Rules |
   | --- | --- | --- |
-  | REDCap project | Unit, API URL, name of the secret holding the token (never the token itself), site field name (default `hosp_id`), reviewed identifier list (flags kept, fields removed, fields added, last review date and reviewer), active | One per unit; changes take effect at the next pipeline run |
+  | REDCap project | Unit, API URL, name of the secret holding the token (never the token itself), site field name (default `hosp_id`), identifier allowlist (flagged fields kept in clear text, such as the site field), active | One per unit; changes take effect at the next pipeline run |
   | Hospital | `hosp_id` value, hospital name, county, country, active, date joined CIN | `hosp_id` unique per project; county must exist in the access hierarchy |
 
-  Saving a hospital creates or updates its node in the access hierarchy, so RLS, indicators and the admin all use one list. dbt reads the hospital table as a source to build `dim_site`; a Dagster sensor rebuilds the affected models when the table changes. A dbt test fails if a record arrives with a site value missing from the list, and the run alerts the data managers to add it. Every change is in the audit log. If `hosp_id` is ever flagged as an identifier, the reviewed list removes it, keeping it in clear text, because hashing it would break site filtering.
+  Saving a hospital creates or updates its node in the access hierarchy, so RLS, indicators and the admin all use one list. dbt reads the hospital table as a source to build `dim_site`; a Dagster sensor rebuilds the affected models when the table changes. A dbt test fails if a record arrives with a site value missing from the list, and the run alerts the data managers to add it. Every change is in the audit log. If `hosp_id` is ever flagged as an identifier, the allowlist keeps it in clear text, because hashing it would break site filtering.
 - **Linking mother and baby.** Because all three projects are hashed with the same key, maternity and neonatal records could be linked on a shared identifier. That raises re-identification risk, so it stays off until the data governance group approves it.
 
 ### Freshness with manual daily syncs
@@ -106,29 +104,13 @@ At each site, unit staff transcribe paper forms (maternity, neonatal, paediatric
 
 A nightly pipeline builds governed indicator tables; at question time, the LLM can only reach those tables through scoped MCP tools.
 
-```mermaid
-flowchart LR
-  subgraph PIPE["Data pipeline (nightly)"]
-    direction LR
-    A["Site REDCap<br/>paper forms typed in"] --> B["CIN pooled REDCap<br/>KWTRP, source of truth"]
-    B --> C["redquack + DuckDB<br/>extract, hash identifiers"]
-    C --> D["Postgres + dbt<br/>raw, stg, marts, qi"]
-  end
-  subgraph APP["Application (per question)"]
-    direction RL
-    E["Query service<br/>scoped, suppressed"] --> F["MCP server<br/>read-only tools, OAuth2"]
-    F --> G["Django + DRF<br/>users, scopes, chat loop"]
-    G --> H["Vue chat app<br/>answers with charts"]
-  end
-  D --> E
-  G <--> I["Claude API<br/>sees aggregates only"]
-```
+&#91;embedded content: system architecture · 9 components\]
 
 The top row runs on a schedule and ends in the `qi` schema. The bottom row runs per question: Vue sends it to Django, Django's chat loop asks the LLM, the LLM calls MCP tools, and the query service returns scoped, suppressed rows. DRF also calls the query service directly for non-chat indicator pages.
 
 | Layer | Original choice | Refined choice |
 | --- | --- | --- |
-| Extract | redquack → DuckDB | Keep; full load once, then incremental by `dateRangeBegin`; identifiers hashed in DuckDB |
+| Extract | Python REDCap client (httpx) → DuckDB | Own tested Python client instead of redquack; full load once, then incremental by `dateRangeBegin`; identifiers hashed in DuckDB |
 | Load | Airbyte → Postgres | DuckDB `postgres` extension (Airbyte has no DuckDB source) |
 | Transform | dbt | Keep, plus an indicator catalogue and `fct_indicator_monthly` |
 | API | Django REST Framework | Keep, versioned under `/api/v1/`, ASGI for streaming |
@@ -142,34 +124,19 @@ The top row runs on a schedule and ends in the `qi` schema. The bottom row runs 
 
 JANICE loads the pooled CIN data once in full, then pulls only records created or changed since the last successful run, and hashes every flagged identifier before anything reaches Postgres. Airbyte is dropped: it supports DuckDB only as a destination, so DuckDB's own `postgres` extension does the load.
 
-```mermaid
-flowchart LR
-  W[("ingest_runs<br/>watermark per run")] <--> X
-  K[("Secrets store<br/>HMAC key, tokens")] --> H
-  R["Pooled CIN REDCap<br/>records, metadata, audit log"] --> X["redquack extract<br/>full once, then incremental"]
-  X --> S["DuckDB staging<br/>cleartext, transient, encrypted volume"]
-  S --> H["Hash identifiers<br/>HMAC-SHA256 on flagged fields"]
-  H --> P["Postgres raw<br/>hashed values only"]
-  P --> T["dbt models<br/>stg, int, marts"]
-  T --> Q["qi indicators<br/>monthly numerators and denominators"]
-  Q --> U["Query service<br/>to API and MCP"]
-  classDef warn fill:#f9eeda,stroke:#d4a017;
-  classDef boundary fill:#e7f1fb,stroke:#2f6fd6;
-  class S warn;
-  class H boundary;
-```
-
-*Amber: cleartext identifiers present. Blue: the privacy boundary.*
+&#91;embedded content: ingestion data flow · identifiers hashed before the warehouse\]
 
 Only the transient DuckDB staging file ever holds cleartext identifiers; it sits on an encrypted volume and is deleted once the hashed load succeeds.
+
+**REDCap server time.** REDCap reads `dateRangeBegin` in its server's local time, with no time zone attached. The KWTRP REDCap server runs on UTC (confirmed in the Control Center, 21 Nov 2026), while Nairobi is UTC+3. The pipeline keeps every watermark as a time-zone-aware datetime and converts it to the zone in `REDCAP_SERVER_TIMEZONE` (default `UTC`) before sending it; a time with no zone is refused, because a wrong conversion would silently skip hours of changes. Times in REDCap's own logs are UTC too.
 
 ### Run types
 
 | Run | When | What it pulls | How |
 | --- | --- | --- | --- |
-| Initial full load | Once, at go-live | Every record, the data dictionary, the audit log | `redquack::redcap_to_db()` in chunks of record IDs |
+| Initial full load | Once, at go-live | Every record, the data dictionary, the audit log | `RedcapClient` (`janice_pipeline.redcap`): record IDs first, then records in batches of 500 |
 | Incremental | Nightly (e.g. 02:00 EAT) | Records created or modified since the last watermark | `datetime_range_begin` (passed to REDCap's `dateRangeBegin`) set to the last successful run's start minus a 1-hour overlap |
-| Deletion sweep | With every incremental | Records deleted since the watermark | `record_delete` events from the REDCap audit log, which redquack can export alongside the data; matching rows are tombstoned |
+| Deletion sweep | With every incremental | Records deleted since the watermark | `record_delete` events from the REDCap audit log, exported with the same client; matching rows are tombstoned |
 | Reconciliation | Weekly | The full list of record IDs only | Compare with `raw`; anything missing is flagged and tombstoned |
 | Full refresh | On demand, or when the data dictionary changes a field an indicator uses | Everything | Same as the initial load, into a new schema, then swapped in |
 
@@ -177,15 +144,15 @@ The watermark is the run's start time in the REDCap server's time zone, stored i
 
 ### Identifier hashing
 
-1. **Find identifiers.** Each run exports the data dictionary and applies the project's **reviewed identifier list**: the fields REDCap flags as identifiers, minus fields the data managers have marked as not identifying (such as clinical measurements), plus fields they have marked as identifying that REDCap does not flag.
+1. **Find identifiers.** Each run exports the data dictionary and takes every field where REDCap's `identifier` flag is set. The flags are maintained in REDCap by the CIN data managers, who are the single source of truth for them.
 2. **Hash.** In DuckDB, replace each identifier value with `HMAC-SHA256(key, normalised value)`. Normalise first (trim, lower-case, strip spaces from phone numbers) so the same person hashes the same way across admissions.
 3. **Keep the key out of the data.** The HMAC key lives in the secrets store, never in the database or the repository. A plain SHA-256 hash is not enough: names, phone numbers and inpatient numbers come from small sets of possible values and can be reversed by trying them all, which a secret key prevents.
 4. **Drop what has no analytic use.** Hashed free text is useless, so free-text identifier fields are dropped rather than hashed. Dates of birth become age at admission in `stg`.
 5. **Load.** Upsert into `raw`, keyed on project, record ID, repeating instrument and instance.
 
-If the dictionary's identifier flags, or its list of fields, differ from those recorded when the list was last reviewed, the run stops and alerts the data managers until they review the change. A new or newly unflagged field is never loaded in cleartext by default.
+If a field's identifier flag changes between runs, the run stops and alerts the data managers rather than loading a newly unflagged field in cleartext.
 
-Why a reviewed list: in the real neonatal dictionary, REDCap's flags were wrong in both directions. Weight, length and head circumference were flagged (hashing them would destroy data the indicators need), while no names, inpatient numbers or dates of birth were flagged. The full field list is reviewed with the CIN data managers, and the KWTRP data protection officer where possible, before any real data is loaded.
+**Before real data is loaded:** the CIN data managers check the flags in REDCap. In the neonatal dictionary, weight, length and head circumference were wrongly flagged and were unflagged in REDCap on 21 Nov 2026. No names, inpatient numbers or dates of birth are flagged; confirm whether any such fields exist, and check the paediatric and maternity dictionaries the same way.
 
 ### Orchestration with Dagster
 
@@ -194,8 +161,8 @@ Use open-source Dagster, self-hosted, from the first sprint. It models the pipel
 | Asset or check | Runs | Implementation |
 | --- | --- | --- |
 | `redcap_metadata` | Each run | Python asset; exports and versions the data dictionary |
-| Identifier-flag check | Each run | Asset check; fails and blocks the run if identifier flags or fields changed since the identifier list was last reviewed |
-| `redcap_extract` | Each run | R script calling `redquack`, launched by Dagster's `PipesSubprocessClient` so its logs and status flow back into Dagster |
+| Identifier-flag check | Each run | Asset check; fails and blocks the run if identifier flags changed |
+| `redcap_extract` | Each run | The Python REDCap client (`janice_pipeline.redcap`), called directly from Dagster assets, so its logs and status show in Dagster |
 | `hashed_staging` and `raw_*` | Each run | Python asset: DuckDB hashing, then the load into Postgres |
 | dbt models | Each run | `dagster-dbt`: every dbt model becomes an asset, and dbt tests show as asset checks |
 | `qi` indicators | Each run | dbt assets; freshness check against the agreed threshold |
@@ -204,7 +171,7 @@ Use open-source Dagster, self-hosted, from the first sprint. It models the pipel
 
 **Alerts.** A run-failure sensor emails the data managers (and posts to a team channel if KWTRP uses one).
 
-**Deployment.** Three containers: `dagster-webserver` (UI), `dagster-daemon` (schedules, sensors) and `pipeline` (the code location, with Python, R, redquack, DuckDB and dbt). Dagster keeps its run history in its own Postgres database.
+**Deployment.** Three containers: `dagster-webserver` (UI), `dagster-daemon` (schedules, sensors) and `pipeline` (the code location, with Python, DuckDB and dbt). Dagster keeps its run history in its own Postgres database.
 
 **Access.** Dagster's open-source UI has no login of its own, so it is published only inside the KWTRP network, behind nginx with single sign-on or at least basic authentication.
 
@@ -313,22 +280,7 @@ Revisit in Phase 3 if outside organisations call the API or MCP server with thei
 
 Every user holds one or more role grants, each a pair of a role (what they can do) and a scope node (which data they see); access to a node covers everything beneath it, and Postgres row-level security enforces the scope even if application code has a bug.
 
-```mermaid
-flowchart TD
-  N["CIN network<br/>(data manager, analyst)"] --> K["Kenya<br/>(programme lead)"]
-  N -.-> FC["Future country"]
-  K --> CA["County A<br/>(county health lead)"]
-  K --> CB["County B"]
-  CA --> H1["Hospital 1<br/>(hospital administrator)"]
-  CA --> H2["Hospital 2"]
-  H1 --> M["Maternity"]
-  H1 --> NE["Neonatal"]
-  H1 --> PA["Paediatrics"]
-  classDef unit fill:#e7f1fb,stroke:#2f6fd6;
-  class M,NE,PA unit;
-```
-
-*Access granted at one level covers everything beneath it. Units hold the QI lead and unit member roles.*
+&#91;embedded content: scope hierarchy and roles · 5 levels\]
 
 The hierarchy is network, country, county, site (hospital), unit. Country is included now, with only Kenya populated, so a future expansion needs no schema change.
 
@@ -468,25 +420,7 @@ def get_indicator_series(
 4. The LLM writes the answer. Django streams text to Vue and, separately, the tool results as structured data.
 5. Vue draws charts and tables from the tool results, never from numbers the LLM typed, so a misread number in prose cannot change the chart.
 
-```mermaid
-sequenceDiagram
-  participant V as Vue app
-  participant D as Django chat loop
-  participant C as Claude API
-  participant M as MCP server
-  participant Q as Query + Postgres
-  V->>D: 1 Question, JWT
-  D->>C: 2 Prompt, tool list
-  C-->>D: 3 Tool call request
-  D->>M: 4 Call tool, user token
-  M->>Q: 5 Scoped query
-  Q-->>M: 6 Suppressed rows
-  M-->>D: 7 Rows + query_id
-  D->>C: 8 Tool result
-  C-->>D: 9 Answer, streamed
-  D-->>V: 10 Text + chart data (from step 7, not from the LLM)
-  Note over D,M: Steps 3 to 8 repeat if the model needs more than one tool
-```
+&#91;embedded content: chat request sequence · 10 steps\]
 
 Django is the only MCP client, so the MCP server and the database stay inside the KWTRP network; only steps 2, 3, 8 and 9 cross the network boundary.
 
@@ -542,40 +476,7 @@ The Vue app is a chat that answers with charts: each reply pairs a short written
 
 Every change reaches production the same way: test first on the laptop, merge through a pull request that CI must pass, deploy automatically to staging, and promote only a tagged release to the KWTRP server.
 
-```mermaid
-gitGraph
-  commit id: "init"
-  branch develop
-  checkout develop
-  commit id: "dev"
-  branch feature-ticket
-  checkout feature-ticket
-  commit id: "feat 1"
-  commit id: "feat 2"
-  checkout develop
-  merge feature-ticket id: "PR, CI green"
-  branch release-1.0.0
-  checkout release-1.0.0
-  commit id: "RC fixes"
-  checkout main
-  merge release-1.0.0 tag: "v1.0.0"
-  checkout develop
-  merge release-1.0.0
-  checkout main
-  branch hotfix-1.0.1
-  checkout hotfix-1.0.1
-  commit id: "fix"
-  checkout main
-  merge hotfix-1.0.1 tag: "v1.0.1"
-  checkout develop
-  merge hotfix-1.0.1
-```
-
-| Branch | Deploys to |
-| --- | --- |
-| `feature/*` | Your laptop (synthetic data only) |
-| `develop`, `release/*` | Staging server, automatically |
-| `main` (tagged) | Production at KWTRP, after approval, through KWTRP IT's deployment process |
+&#91;embedded content: git flow branches mapped to environments\]
 
 ### Environments
 
@@ -651,21 +552,7 @@ janice/
 
 JANICE ships as one Docker Compose stack on a KWTRP server, built and tested in CI, and run day to day by the CIN data managers with a written runbook.
 
-```mermaid
-flowchart LR
-  U["Users<br/>browser, phone"] -- "HTTPS in" --> NG
-  subgraph KW["KWTRP network"]
-    subgraph HOST["JANICE host: Docker Compose"]
-      NG["nginx + Vue build<br/>TLS, static files"] --> DJ["Django (uvicorn)<br/>API, chat loop, MCP"]
-      DJ --> WK["Celery worker<br/>exports, long tasks"]
-      DJ --> PG[("PostgreSQL<br/>app + warehouse, RLS")]
-      WK --> RD[("Redis<br/>queue, cache, limits")]
-      PL["Dagster pipeline<br/>redquack, DuckDB, dbt"] --> PG
-    end
-    RC["Pooled CIN REDCap<br/>existing KWTRP server"] -- "REDCap API" --> PL
-  end
-  DJ -- "HTTPS out only" --> CL["Claude API"]
-```
+&#91;embedded content: deployment · 6 containers on a KWTRP server\]
 
 Users reach JANICE over HTTPS through nginx. The only outbound connection is from Django to the Claude API. The pipeline reads the pooled REDCap project over the internal network.
 
@@ -678,7 +565,7 @@ Users reach JANICE over HTTPS through nginx. The only outbound connection is fro
 | `worker` | app | Celery tasks: exports, scheduled checks | None |
 | `redis` | app | Celery broker, cache, rate limits | None |
 | `postgres` | app | App database, warehouse (`raw`, `stg`, `marts`, `qi`), Dagster run storage | Data volume, WAL archive |
-| `pipeline` | pipeline | Dagster code location: Python, R + redquack, DuckDB, dbt | Encrypted staging volume, cleared after each run |
+| `pipeline` | pipeline | Dagster code location: Python, DuckDB, dbt | Encrypted staging volume, cleared after each run |
 | `dagster-webserver`, `dagster-daemon` | pipeline | Dagster UI, schedules, sensors | None (state in Postgres) |
 | `grafana`, `prometheus`, `loki`, `alloy`, exporters | observability | Dashboards, metrics, logs, alerts | Metrics and log volumes (not backed up) |
 | `glitchtip` | observability | Error tracking for Django, Vue and the pipeline | Its own small database |
@@ -811,29 +698,7 @@ JANICE handles health data, which Kenya's Data Protection Act 2019 treats as sen
 
 With a 30 November 2026 start, two-week sprints and one full-time developer, JANICE can go live in production on 31 March 2027, run a three-month pilot to the end of June, and have the evaluation paper submitted by the end of September 2027.
 
-```mermaid
-gantt
-  title JANICE delivery plan (assumes 30 Nov 2026 start, two-week sprints)
-  dateFormat YYYY-MM-DD
-  axisFormat %b %Y
-  section Governance
-  Approvals (DPIA, ethics, ZDR)        :a1, 2026-11-30, 2027-03-19
-  section Build
-  Sprint 0 inception                  :s0, 2026-11-30, 2026-12-11
-  CI/CD and staging live              :milestone, m1, 2026-12-11, 0d
-  Foundations (S1 to S3)              :f1, 2026-12-14, 2027-01-29
-  Gate 1 - indicators match CIN       :milestone, g1, 2027-01-29, 0d
-  MVP build (S4 to S6)                :mv, 2027-02-01, 2027-03-12
-  MVP on staging                      :milestone, m4, 2027-03-12, 0d
-  Hardening and UAT (S7)              :hd, 2027-03-15, 2027-03-26
-  section Pilot
-  Production go-live                  :crit, milestone, live, 2027-03-31, 0d
-  Pilot, all units (S8 to S14)        :pl, 2027-03-31, 2027-06-30
-  Gate 2 - pilot review               :milestone, g2, 2027-06-30, 0d
-  section Research
-  Evaluation paper                    :pp, 2027-07-01, 2027-09-30
-  Paper submitted                     :milestone, sub, 2027-09-30, 0d
-```
+&#91;embedded content: delivery timeline · 7 phases, 6 milestones\]
 
 Approvals run alongside the build, because the DPIA, ethics review and Anthropic's zero data retention request decide the go-live date more than code does. The plan allows for the Christmas and New Year holidays in Sprint 1 and Easter just before go-live.
 
@@ -861,7 +726,7 @@ Approvals run alongside the build, because the DPIA, ethics review and Anthropic
 | Epic | Key deliverables | Sprints |
 | --- | --- | --- |
 | E1 Platform and DevOps | Monorepo, pre-commit, CI/CD workflows, Docker Compose projects, Ansible, registry, staging server, self-hosted runner at KWTRP | S0, S1, then ongoing |
-| E2 Data pipeline | Dagster project, R extract with redquack, identifier hashing, Postgres load, incremental and deletion sweeps, reconciliation | S1 to S3 |
+| E2 Data pipeline | Dagster project, Python REDCap client extract, identifier hashing, Postgres load, incremental and deletion sweeps, reconciliation | S1 to S3 |
 | E3 Indicators | dbt project, staging models, five pilot indicators with unit tests, catalogue, SPC limits, completeness measures | S2 to S4 |
 | E4 Access and security | Scope hierarchy, roles, RLS policies and tests, suppression engine, threat model, ASVS checklist, pen test fixes | S0, S3 to S5, S7 |
 | E5 API | DRF `v1` endpoints, OpenAPI schema, auth, interventions and targets, admin | S3 to S5 |
@@ -911,15 +776,7 @@ Treat changes in the indicators themselves as exploratory: a pilot of this size 
 
 ### Roadmap
 
-```mermaid
-flowchart LR
-  P0["Phase 0: Foundations<br/>Docker, approvals<br/>ingestion and load<br/>dbt staging models<br/>5 pilot indicators"] --> G1{{"Gate 1<br/>numbers match CIN reports"}}
-  G1 --> P1["Phase 1: Pilot<br/>MCP tools and chat<br/>all three units<br/>audit and feedback<br/>study data collected"]
-  P1 --> G2{{"Gate 2<br/>eval set passes,<br/>users find it useful"}}
-  G2 --> P2["Phase 2: Expand<br/>more sites<br/>interventions, SPC<br/>administrator views<br/>more indicators"]
-  P2 --> G3{{"Gate 3<br/>agreement for<br/>cross-site sharing"}}
-  G3 --> P3["Phase 3: Scale<br/>network comparisons<br/>external MCP clients<br/>optional analyst SQL"]
-```
+&#91;embedded content: phased roadmap · 4 phases, 3 gates\]
 
 Each phase starts only when the gate before it is met; dates are in the Delivery plan.
 
@@ -971,6 +828,7 @@ The design now covers the system end to end, but twelve topics are still open; t
 | Claude API outage or cost overrun | Low | Medium | Spend caps; indicator pages keep working without chat | Developer |
 | Staging server not approved for real data | Medium | Low | Synthetic staging; KWTRP pre-production stack for user acceptance testing | Developer |
 | Tool or model changes (Dagster ownership, model retirements) | Low | Low | Pinned versions, golden set before upgrades | Developer |
+| Wrong identifier flags in REDCap (measurements hashed, identifiers loaded in clear text) | High (seen in neonatal) | High | Data managers correct the flags in REDCap before the first real load; pipeline stops if flags change | CIN data managers |
 
 ## Sources
 
