@@ -12,6 +12,13 @@ private-key checks, a block on committing directly to `main`/`develop`, and
 Python linting/formatting (Ruff). If a hook modifies files, review the change,
 `git add` it, and commit again. Never bypass hooks with `--no-verify`.
 
+Docker is required for local services:
+
+```bash
+cp .env.example .env    # set POSTGRES_PASSWORD (e.g. openssl rand -base64 24)
+docker compose up -d
+```
+
 ## Branching (git flow)
 
 - `main`: released code only; every merge is tagged (`v1.2.0`).
