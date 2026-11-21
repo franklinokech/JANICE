@@ -6,12 +6,10 @@ Example:
 """
 
 import argparse
-import csv
 import sys
 from pathlib import Path
 
-from .dictionary import read_data_dictionary
-from .records import generate_records
+from .export import write_synthetic_export
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -40,17 +38,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: data dictionary not found: {args.dictionary}", file=sys.stderr)
         return 1
 
-    fields = read_data_dictionary(args.dictionary)
-    columns, rows = generate_records(
-        fields, count=args.records, seed=args.seed, missing_rate=args.missing_rate
+    record_count, column_count = write_synthetic_export(
+        args.dictionary,
+        args.out,
+        records=args.records,
+        seed=args.seed,
+        missing_rate=args.missing_rate,
     )
-
-    with args.out.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=columns)
-        writer.writeheader()
-        writer.writerows(rows)
-
-    print(f"Wrote {len(rows)} synthetic records ({len(columns)} columns) to {args.out}")
+    print(f"Wrote {record_count} synthetic records ({column_count} columns) to {args.out}")
     return 0
 
 

@@ -13,3 +13,4 @@ the next number. Superseded records are kept and marked as superseded.
 | [0006](0006-serve-frontend-and-api-from-one-origin.md) | Serve frontend and API from one origin | Accepted |
 | [0007](0007-pin-ci-actions-and-automate-updates.md) | Pin CI actions; automate updates | Accepted |
 | [0008](0008-git-flow-with-protected-branches.md) | Git flow with protected branches | Accepted |
+| [0009](0009-use-dagster-for-orchestration.md) | Use Dagster for orchestration | Accepted |

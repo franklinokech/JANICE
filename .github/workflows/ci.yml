@@ -189,3 +189,6 @@ jobs:
 
       - name: Run tests
         run: uv run pytest
+
+      - name: Check Dagster definitions load
+        run: uv run dg check defs
