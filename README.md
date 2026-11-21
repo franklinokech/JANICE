@@ -28,7 +28,7 @@ Open http://localhost:8088: nginx serves the app and forwards `/api/` to Django.
 | --- | --- |
 | `backend/` | Django API, chat loop, MCP server |
 | `frontend/` | Vue 3 app |
-| `pipeline/` | Dagster, R extract, dbt project |
+| `pipeline/` | Data pipeline: data dictionary reader and synthetic data (Dagster, R extract and dbt to follow) |
 | `deploy/` | Docker Compose, nginx, Ansible |
 | `docs/` | Design doc, ADRs, runbooks |
 
