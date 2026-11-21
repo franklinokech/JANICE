@@ -244,6 +244,7 @@ secrets/
 *.RData
 data/
 !tests/fixtures/**/*.csv
+*.sqlite3
 
 # --- Python ---
 __pycache__/
