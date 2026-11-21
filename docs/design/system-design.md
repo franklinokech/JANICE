@@ -435,7 +435,7 @@ Resources (read-only context the client can load): the indicator catalogue and a
 ```python
 @mcp.tool()
 def get_indicator_series(
-    indicator_id: IndicatorId,          # enum built from the catalogue
+    indicator_id: IndicatorId,  # enum built from the catalogue
     site: SiteCode,
     unit: Unit,
     date_from: date,
@@ -444,8 +444,8 @@ def get_indicator_series(
 ) -> SeriesResult:
     """Monthly numerator, denominator and rate for one QI indicator."""
     user = current_user()
-    require_scope(user, site, unit)      # raises if not allowed
-    return queries.indicator_series(...) # suppression applied inside
+    require_scope(user, site, unit)  # raises if not allowed
+    return queries.indicator_series(...)  # suppression applied inside
 ```
 
 ### Guardrails
