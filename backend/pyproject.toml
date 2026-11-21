@@ -8,6 +8,7 @@ dependencies = [
     "djangorestframework-stubs>=3.18.2",
     "psycopg[binary]>=3.3.9",
     "ruff>=0.17.6",
+    "uvicorn>=0.54.0",
 ]
 
 [dependency-groups]
