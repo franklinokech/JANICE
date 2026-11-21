@@ -1,0 +1,33 @@
+# Hooks run on every `git commit`. Docs: https://pre-commit.com
+# Update pinned versions with: pre-commit autoupdate
+default_install_hook_types: [pre-commit]
+
+repos:
+  # General file hygiene and safety checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: no-commit-to-branch        # block commits made directly on main/develop
+        args: [--branch, main, --branch, develop]
+      - id: check-added-large-files    # block files over 500 KB (e.g. data exports)
+        args: [--maxkb=500]
+      - id: check-merge-conflict       # block leftover <<<<<<< conflict markers
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer          # every file ends with one newline
+      - id: trailing-whitespace
+      - id: detect-private-key         # block SSH/TLS private keys
+
+  # Secret scanning: API tokens, passwords, keys
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # Python linting and formatting (used from increment 3)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.6
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format

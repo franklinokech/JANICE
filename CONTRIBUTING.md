@@ -1,5 +1,17 @@
 # Contributing
 
+## One-time setup
+
+```bash
+uv tool install pre-commit
+pre-commit install
+```
+
+Hooks then run on every commit: secret scanning (gitleaks), large-file and
+private-key checks, a block on committing directly to `main`/`develop`, and
+Python linting/formatting (Ruff). If a hook modifies files, review the change,
+`git add` it, and commit again. Never bypass hooks with `--no-verify`.
+
 ## Branching (git flow)
 
 - `main`: released code only; every merge is tagged (`v1.2.0`).
