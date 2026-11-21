@@ -1,6 +1,15 @@
-# Local development stack. Start with: docker compose up -d
+# Local development stack. Start with: docker compose up -d --build
 # Docs: https://docs.docker.com/compose/
 name: janice
+
+# Shared settings for every service that runs the backend image
+x-backend: &backend
+  build: ./backend
+  image: janice-backend:dev
+  env_file: .env
+  environment:
+    POSTGRES_HOST: db      # inside Docker, Postgres is reached by its service name
+    POSTGRES_PORT: "5432"
 
 services:
   db:
@@ -18,6 +27,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  migrate:
+    <<: *backend
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    <<: *backend
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
 volumes:
   pgdata:
