@@ -13,6 +13,7 @@ REDCap docs: https://redcap.vumc.org (Help & FAQ -> Data Dictionary)
 """
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -73,13 +74,18 @@ def read_data_dictionary(path: Path) -> list[Field]:
     """Read a data dictionary CSV (download or API format) into a list of fields, in order."""
     # utf-8-sig also strips the byte order mark Excel adds when saving CSV files
     with path.open(newline="", encoding="utf-8-sig") as f:
-        rows = [
-            {
-                HEADER_ALIASES.get(key.strip(), key.strip()): (value or "").strip()
-                for key, value in raw_row.items()
-            }
-            for raw_row in csv.DictReader(f)
-        ]
+        return fields_from_rows(csv.DictReader(f))
+
+
+def fields_from_rows(rows: Iterable[dict[str, str]]) -> list[Field]:
+    """Build fields from dictionary rows (CSV rows or the API's JSON metadata), in order."""
+    normalised = [
+        {
+            HEADER_ALIASES.get(key.strip(), key.strip()): (value or "").strip()
+            for key, value in raw_row.items()
+        }
+        for raw_row in rows
+    ]
 
     return [
         Field(
@@ -98,5 +104,5 @@ def read_data_dictionary(path: Path) -> list[Field]:
             identifier=row.get("identifier", "").lower() == "y",
             required=row.get("required_field", "").lower() == "y",
         )
-        for row in rows
+        for row in normalised
     ]
