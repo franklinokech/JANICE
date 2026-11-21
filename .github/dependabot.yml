@@ -1,12 +1,13 @@
 # Dependabot: weekly pull requests to keep pinned dependencies up to date.
 # Docs: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+# Note: Dependabot does not support YAML anchors/aliases, so each schedule is written out.
 version: 2
 
 updates:
   # GitHub Actions in .github/workflows (updates the pinned SHAs and their version comments)
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule: &weekly
+    schedule:
       interval: "weekly"
       day: "monday"
       time: "06:00"
@@ -22,7 +23,11 @@ updates:
   # Python packages in backend/pyproject.toml and backend/uv.lock
   - package-ecosystem: "uv"
     directory: "/backend"
-    schedule: *weekly
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Nairobi"
     cooldown:
       default-days: 7
     commit-message:
@@ -35,7 +40,11 @@ updates:
   # Base images in backend/Dockerfile
   - package-ecosystem: "docker"
     directory: "/backend"
-    schedule: *weekly
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Nairobi"
     commit-message:
       prefix: "build"
     ignore:
@@ -47,7 +56,11 @@ updates:
   # Images in compose.yaml
   - package-ecosystem: "docker-compose"
     directory: "/"
-    schedule: *weekly
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Nairobi"
     commit-message:
       prefix: "build"
     ignore:
@@ -58,7 +71,11 @@ updates:
   # Hook versions in .pre-commit-config.yaml
   - package-ecosystem: "pre-commit"
     directory: "/"
-    schedule: *weekly
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Africa/Nairobi"
     commit-message:
       prefix: "chore"
     groups:
