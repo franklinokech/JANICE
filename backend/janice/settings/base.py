@@ -141,4 +141,13 @@ REST_FRAMEWORK = {
     "DEFAULT_VERSION": "v1",
     # JSON only: no browsable HTML API
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
+    # Rate limits per client: anonymous by IP address, signed-in users by account
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/minute",
+        "user": "600/minute",
+    },
 }

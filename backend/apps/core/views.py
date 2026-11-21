@@ -15,6 +15,7 @@ class HealthView(APIView):
 
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    throttle_classes: list = []
     http_method_names = ["get", "head", "options"]
 
     def get(self, request: Request, version: str) -> Response:
