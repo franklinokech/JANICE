@@ -19,6 +19,8 @@ DEBUG = False
 SECRET_KEY = require_env("DJANGO_SECRET_KEY")
 ALLOWED_HOSTS = require_env("DJANGO_ALLOWED_HOSTS").split(",")
 
+DATABASES["default"]["PASSWORD"] = require_env("POSTGRES_PASSWORD")  # noqa: F405
+
 # HTTPS hardening (TLS is terminated by nginx in front of Django)
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 SESSION_COOKIE_SECURE = True

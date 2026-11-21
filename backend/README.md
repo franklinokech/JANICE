@@ -4,16 +4,22 @@ Django + Django REST Framework API.
 
 ## Run locally
 
+Postgres runs in Docker; Django reads its settings from the repository-root `.env`.
+
 ```bash
-uv sync                                  # install dependencies
-uv run python manage.py migrate
-uv run python manage.py runserver        # http://localhost:8000/api/v1/health/
+cp ../.env.example ../.env       # once; then set POSTGRES_PASSWORD
+docker compose up -d db          # from the repository root
+uv sync
+uv run --env-file ../.env python manage.py migrate
+uv run --env-file ../.env python manage.py runserver
 ```
 
 ## Test
 
+Tests need Postgres running (`docker compose up -d db`).
+
 ```bash
-uv run pytest
+uv run --env-file ../.env pytest
 ```
 
 ## Settings

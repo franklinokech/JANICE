@@ -1,19 +1,35 @@
 """Tests for the health check endpoint.
 
-The health endpoint lets monitoring tools, Docker and CI ask "is the API up?"
-without logging in. It is the first endpoint, so it also proves URL path
+The health endpoint lets monitoring tools, Docker and CI ask "is the API up,
+and can it reach its database?" without logging in. It also proves URL path
 versioning (/api/v1/...) works.
 """
 
+import pytest
+from django.db import OperationalError
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 
-def test_health_returns_ok_on_v1():
+@pytest.mark.django_db
+def test_health_returns_ok_when_database_is_reachable():
     response = APIClient().get("/api/v1/health/")
 
     assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+    assert response.json() == {"status": "ok", "database": "ok"}
+
+
+def test_health_returns_503_when_database_is_unreachable(monkeypatch):
+    class BrokenConnection:
+        def cursor(self):
+            raise OperationalError("could not connect to server")
+
+    monkeypatch.setattr("apps.core.views.connection", BrokenConnection())
+
+    response = APIClient().get("/api/v1/health/")
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "error", "database": "unavailable"}
 
 
 def test_health_url_can_be_reversed_by_name():
