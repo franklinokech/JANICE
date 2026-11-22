@@ -1,0 +1,55 @@
+models:
+  - name: stg_redcap__records
+    description: >
+      Every REDCap row from every project, with a common record key and site.
+      The base for the per-project staging models.
+    columns:
+      - name: project
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: source('raw', 'projects')
+                field: project
+      - name: record_id
+        data_tests: [not_null]
+      - name: record_key
+        data_tests: [not_null]
+      - name: site_id
+        description: >
+          The record's site. A record without one could not be limited to the
+          sites a user may see, so a missing site fails the build.
+        data_tests: [not_null]
+
+unit_tests:
+  - name: repeat_instances_take_their_records_site
+    description: Maternity's previous pregnancies have no hosp_id of their own.
+    model: stg_redcap__records
+    given:
+      - input: source('raw', 'redcap_records')
+        rows:
+          - {project: maternity, record_id: "10", event: "", repeat_instrument: "", repeat_instance: "", data: '{"hosp_id": "H01"}'}
+          - {project: maternity, record_id: "10", event: "", repeat_instrument: prev_preg, repeat_instance: "1", data: '{"gravida": "2"}'}
+      - input: source('raw', 'projects')
+        rows:
+          - {project: maternity, site_field: hosp_id}
+    expect:
+      rows:
+        - {record_key: "maternity:10", repeat_instrument: "", is_repeat_instance: false, site_id: H01}
+        - {record_key: "maternity:10", repeat_instrument: prev_preg, is_repeat_instance: true, site_id: H01}
+
+  - name: each_project_uses_its_own_site_field
+    model: stg_redcap__records
+    given:
+      - input: source('raw', 'redcap_records')
+        rows:
+          - {project: neonatal, record_id: "1", event: "", repeat_instrument: "", repeat_instance: "", data: '{"hosp_id": "H01", "facility_code": "X"}'}
+          - {project: kilifi_nbu, record_id: "1", event: "", repeat_instrument: "", repeat_instance: "", data: '{"hosp_id": "X", "facility_code": "K07"}'}
+      - input: source('raw', 'projects')
+        rows:
+          - {project: neonatal, site_field: hosp_id}
+          - {project: kilifi_nbu, site_field: facility_code}
+    expect:
+      rows:
+        - {record_key: "neonatal:1", site_id: H01}
+        - {record_key: "kilifi_nbu:1", site_id: K07}

@@ -38,6 +38,7 @@ class WarehouseResource(dg.ConfigurableResource):
 
 def build_warehouse_asset(projects: list[Project]) -> dg.AssetsDefinition:
     """The load asset, with one partition per project, after redcap_staging."""
+    by_key = {project.key: project for project in projects}
 
     @dg.asset(
         name="warehouse_raw",
@@ -54,7 +55,8 @@ def build_warehouse_asset(projects: list[Project]) -> dg.AssetsDefinition:
         staging: StagingResource,
         warehouse: WarehouseResource,
     ) -> dg.MaterializeResult:
-        project_key = context.partition_key
+        project = by_key[context.partition_key]
+        project_key = project.key
         settings = warehouse.settings()
         staging_db = staging.db_path(project_key)
         if not staging_db.exists():
@@ -64,7 +66,11 @@ def build_warehouse_asset(projects: list[Project]) -> dg.AssetsDefinition:
             )
 
         result = load_project(
-            staging_db, project_key=project_key, settings=settings, schema=warehouse.schema_name
+            staging_db,
+            project_key=project_key,
+            settings=settings,
+            site_field=project.site_field,
+            schema=warehouse.schema_name,
         )
         context.log.info(f"Loaded {result.rows} {project_key} rows into the warehouse")
         return dg.MaterializeResult(

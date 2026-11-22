@@ -1,0 +1,15 @@
+# How dbt connects to Postgres. No secrets here: everything comes from the same
+# POSTGRES_* variables as the backend and the pipeline (the git-ignored .env
+# locally; real secrets on servers).
+janice:
+  target: default
+  outputs:
+    default:
+      type: postgres
+      host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
+      port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
+      dbname: "{{ env_var('POSTGRES_DB') }}"
+      user: "{{ env_var('POSTGRES_USER') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      schema: public
+      threads: 4
