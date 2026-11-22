@@ -226,7 +226,7 @@ dbt turns raw REDCap tables into one governed table of QI indicators per site, u
 
 ### The indicator catalogue
 
-Each QI indicator is defined once, in a dbt seed or YAML file reviewed by the clinical lead, with: `indicator_id`, name, plain-language definition, numerator rule, denominator rule, unit(s), target, desired direction (higher or lower is better), version and owner. dbt builds `fct_indicator_monthly` from it. The MCP server reads the same catalogue to tell the model what exists, so a new indicator becomes askable as soon as it is merged.
+Each QI indicator is defined once, in its dbt model's YAML (`config.meta`), next to the SQL that computes it (ADR 0013). The definition covers its `indicator_id`, name, plain-language definition, numerator, denominator, exclusions, documentation completeness, breakdowns, REDCap fields, rationale, references, desired direction, version and approval status. The definitions are validated in CI and rendered into a readable catalogue in `docs/indicators/` (`uv run janice-indicators`), which the indicator review group reads and signs off; a test fails if the pages fall out of date. Rules shared by every indicator (missing and implausible values, empty rates, completeness, suppression) are in `docs/indicators/README.md` and are signed off once. Each indicator is a table in the `qi` schema with one row per site and admission month. The MCP server will read the same catalogue to tell the model what exists, so a new indicator becomes askable as soon as it is merged.
 
 ### Pilot indicators
 
