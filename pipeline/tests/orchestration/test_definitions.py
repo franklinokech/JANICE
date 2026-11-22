@@ -94,3 +94,19 @@ def test_warehouse_asset_and_ingest_job_are_registered():
 
     assert "warehouse_raw" in asset_keys
     assert defs.resolve_job_def("ingest_project") is not None
+
+
+def test_the_nightly_schedule_and_sensor_are_registered_and_off_by_default():
+    defs_for_test = build_defs({})
+
+    schedule = defs_for_test.resolve_schedule_def("nightly_ingest")
+    sensor = defs_for_test.resolve_sensor_def("indicators_after_nightly_ingest")
+    assert schedule.default_status == dg.DefaultScheduleStatus.STOPPED
+    assert sensor.default_status == dg.DefaultSensorStatus.STOPPED
+
+
+def test_servers_turn_the_nightly_run_on():
+    defs_for_test = build_defs({"JANICE_SCHEDULES": "on"})
+
+    schedule = defs_for_test.resolve_schedule_def("nightly_ingest")
+    assert schedule.default_status == dg.DefaultScheduleStatus.RUNNING

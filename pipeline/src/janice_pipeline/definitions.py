@@ -9,6 +9,7 @@ Settings come from the environment (the git-ignored .env on a laptop):
   (default ~/janice-data, outside the repository).
 - JANICE_PROJECTS_FILE: the project registry (default projects/projects.yaml).
 - REDCAP_API_URL: default API URL for projects that do not set their own.
+- JANICE_SCHEDULES: "on" to run the nightly schedule and sensor (servers only).
 - POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER: the warehouse.
 Secrets (each project's token, JANICE_HASH_KEY, POSTGRES_PASSWORD) are read
 only when a run starts.
@@ -24,6 +25,10 @@ from janice_pipeline.orchestration.dbt import (
     build_warehouse_models,
     dbt_resource,
     warehouse_models,
+)
+from janice_pipeline.orchestration.schedules import (
+    build_indicators_sensor,
+    build_nightly_schedule,
 )
 from janice_pipeline.orchestration.staging import (
     API_URL_ENV,
@@ -58,6 +63,7 @@ def data_dir(env: Mapping[str, str]) -> Path:
 
 def build_defs(env: Mapping[str, str]) -> dg.Definitions:
     projects = load_projects(env.get(REGISTRY_ENV) or None)
+    schedules_on = env.get("JANICE_SCHEDULES") == "on"
     return dg.Definitions(
         assets=[
             synthetic_redcap_export,
@@ -66,6 +72,8 @@ def build_defs(env: Mapping[str, str]) -> dg.Definitions:
             warehouse_models,
         ],
         jobs=[build_ingest_job(), build_warehouse_models],
+        schedules=[build_nightly_schedule(projects, running=schedules_on)],
+        sensors=[build_indicators_sensor(projects, running=schedules_on)],
         resources={
             "source": source_from_env(env),
             "staging": StagingResource(data_dir=str(data_dir(env))),
