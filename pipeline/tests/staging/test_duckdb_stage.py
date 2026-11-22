@@ -5,6 +5,8 @@ real patient data is needed. The rule these tests protect: identifiers are
 hashed in memory, batch by batch, so cleartext never reaches the DuckDB file.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import duckdb
 import pytest
 
@@ -183,3 +185,66 @@ def test_a_project_with_no_records_gives_an_empty_table(tmp_path):
 
     assert result.records == 0
     assert query(db, "SELECT count(*) FROM raw_maternity") == [(0,)]
+
+
+# --- Incremental staging ---------------------------------------------------
+# With changed_since, only records created or changed since then are staged,
+# and the file records what it holds (_stage_info), so the load knows whether
+# to replace the whole project or only those records.
+
+
+class ChangedSource(FakeSource):
+    """Returns only the first two records as changed, and remembers the time asked for."""
+
+    def export_record_ids(self, record_id_field, changed_since=None):
+        self.changed_since = changed_since
+        ids = [row[record_id_field] for row in self.rows]
+        return ids if changed_since is None else ids[:2]
+
+
+def stage_info(db_path):
+    return query(db_path, "SELECT mode, changed_since, started_at FROM _stage_info")
+
+
+def test_a_full_stage_records_its_mode_and_start_time(tmp_path):
+    db = tmp_path / "staging.duckdb"
+    before = datetime.now(UTC)
+
+    stage_project(FakeSource(count=3), project_key="neonatal", db_path=db, key=KEY)
+
+    ((mode, changed_since, started_at),) = stage_info(db)
+    assert (mode, changed_since) == ("full", None)
+    assert before - timedelta(seconds=1) <= started_at <= datetime.now(UTC)
+
+
+def test_an_incremental_stage_holds_only_changed_records(tmp_path):
+    db = tmp_path / "staging.duckdb"
+    source = ChangedSource(count=5)
+    since = datetime(2026, 11, 20, 23, 0, tzinfo=UTC)
+
+    result = stage_project(source, project_key="neonatal", db_path=db, key=KEY, changed_since=since)
+
+    assert source.changed_since == since
+    assert result.records == 2
+    assert query(db, "SELECT count(*) FROM raw_neonatal") == [(2,)]
+    ((mode, changed_since, _),) = stage_info(db)
+    assert (mode, changed_since) == ("changes", since)
+
+
+def test_the_start_time_is_taken_before_reading_redcap(tmp_path):
+    # Records changed while the export runs must be caught by the next run,
+    # so the watermark is the moment before the first request
+    db = tmp_path / "staging.duckdb"
+    source = FakeSource(count=1)
+    seen = {}
+    original = source.export_metadata
+
+    def export_metadata():
+        seen["at"] = datetime.now(UTC)
+        return original()
+
+    source.export_metadata = export_metadata
+    stage_project(source, project_key="neonatal", db_path=db, key=KEY)
+
+    ((_, _, started_at),) = stage_info(db)
+    assert started_at <= seen["at"]
