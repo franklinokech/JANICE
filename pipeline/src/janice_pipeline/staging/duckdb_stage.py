@@ -1,13 +1,14 @@
-"""Stage one REDCap unit into a local DuckDB file, identifiers already hashed.
+"""Stage one REDCap project into a local DuckDB file, identifiers already hashed.
 
 Each batch of records is hashed in memory (privacy.hashing.protect_row) before
 it is written, so cleartext identifiers never reach the disk. Every value is
 stored as text, exactly as REDCap sent it; typing is dbt's job, with tests.
 
-A run replaces the unit's table inside one transaction: if any batch fails,
+A run replaces the project's table inside one transaction: if any batch fails,
 the previous table is left as it was.
 """
 
+import re
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,10 +17,9 @@ from typing import Protocol
 import duckdb
 
 from janice_pipeline.privacy.hashing import protect_row
+from janice_pipeline.projects.registry import PROJECT_KEY_PATTERN
 from janice_pipeline.synthetic.dictionary import Field
 
-# The unit names a table, so only these values are ever accepted
-UNITS = frozenset({"neonatal", "paediatrics", "maternity"})
 DEFAULT_BATCH_SIZE = 500
 
 
@@ -37,28 +37,37 @@ class RecordSource(Protocol):
 
 @dataclass(frozen=True)
 class StageResult:
-    unit: str
+    project: str
     table: str
     records: int  # distinct record IDs
     rows: int  # rows written; more than records when instruments repeat
     columns: int
 
 
-def stage_unit(
+def stage_project(
     source: RecordSource,
     *,
-    unit: str,
+    project_key: str,
     db_path: Path,
     key: bytes,
     keep_in_clear: set[str] = frozenset(),
+    required_fields: set[str] = frozenset(),
     batch_size: int = DEFAULT_BATCH_SIZE,
 ) -> StageResult:
-    """Export every record of one unit, hash identifiers, write raw_<unit>."""
-    if unit not in UNITS:
-        raise ValueError(f"Unknown unit {unit!r}; expected one of {sorted(UNITS)}")
-    table = f"raw_{unit}"
+    """Export every record of one project, hash identifiers, write raw_<project_key>.
+
+    ``required_fields`` must exist in the project's data dictionary (e.g. its
+    site field); if any is missing, nothing is written.
+    """
+    # Checked here too, not only in the registry: the key becomes a table name
+    if not re.fullmatch(PROJECT_KEY_PATTERN, project_key):
+        raise ValueError(f"Unsafe project key {project_key!r}")
+    table = f"raw_{project_key}"
 
     fields = source.export_metadata()
+    missing = sorted(set(required_fields) - {f.name for f in fields})
+    if missing:
+        raise ValueError(f"Project {project_key} has no field(s) {missing} in its data dictionary")
     record_id_field = fields[0].name
     record_ids = source.export_record_ids(record_id_field)
 
@@ -88,7 +97,7 @@ def stage_unit(
         con.close()
 
     return StageResult(
-        unit=unit, table=table, records=len(record_ids), rows=rows, columns=len(columns)
+        project=project_key, table=table, records=len(record_ids), rows=rows, columns=len(columns)
     )
 
 
@@ -110,7 +119,7 @@ def _insert(
             raise ValueError("REDCap returned different columns in a later batch")
     placeholders = ", ".join("?" for _ in columns)
     con.executemany(
-        # Safe: table comes from UNITS and placeholders are only "?"; values are bound
+        # Safe: table comes from a checked project key and placeholders are only "?"
         f"INSERT INTO {table} VALUES ({placeholders})",  # noqa: S608
         [[row[c] for c in columns] for row in rows],
     )

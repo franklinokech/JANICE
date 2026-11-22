@@ -1,0 +1,29 @@
+# REDCap projects JANICE stages. Each project becomes one Dagster partition and
+# one staging table, raw_<key>.
+#
+# No secrets in this file. Each project's API token lives in the environment,
+# in REDCAP_TOKEN_<KEY> unless token_env names another variable.
+#
+# Settings (only key and site_field are required):
+#   key              lowercase letters, digits and _; becomes the table name
+#   site_field       field holding the site; kept in clear for row-level security
+#   description      free text, for people reading this file
+#   keep_in_clear    other flagged fields to keep readable (needs DPIA approval)
+#   token_env        environment variable holding the token
+#   api_url          REDCap API URL; default is REDCAP_API_URL from the environment
+#   server_timezone  REDCap server's time zone; default UTC
+#   dictionary_file  data dictionary for synthetic data; default <key>_dictionary.csv
+#   enabled          false to stop staging a project without deleting its entry
+
+projects:
+  - key: neonatal
+    description: CIN pooled neonatal project (classic)
+    site_field: hosp_id
+
+  - key: paediatrics
+    description: CIN pooled paediatrics project (classic)
+    site_field: hosp_id
+
+  - key: maternity
+    description: CIN pooled maternity project (classic, with repeating instruments)
+    site_field: hosp_id

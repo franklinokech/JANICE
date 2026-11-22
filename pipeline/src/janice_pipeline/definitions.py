@@ -5,10 +5,11 @@ Start the local UI with:  uv run dg dev
 Settings come from the environment (the git-ignored .env on a laptop):
 - JANICE_SOURCE: "synthetic" (default, for laptops and CI) or "redcap"
   (staging and production servers only: real data).
-- JANICE_DATA_DIR: where data dictionaries and the staging file live
+- JANICE_DATA_DIR: where data dictionaries and the staging files live
   (default ~/janice-data, outside the repository).
-- REDCAP_API_URL, REDCAP_SERVER_TIMEZONE: used when JANICE_SOURCE=redcap.
-Secrets (REDCAP_TOKEN_<UNIT>, JANICE_HASH_KEY) are read only when a run starts.
+- JANICE_PROJECTS_FILE: the project registry (default projects/projects.yaml).
+- REDCAP_API_URL: default API URL for projects that do not set their own.
+Secrets (each project's token, JANICE_HASH_KEY) are read only when a run starts.
 """
 
 import os
@@ -18,14 +19,15 @@ from pathlib import Path
 import dagster as dg
 
 from janice_pipeline.orchestration.staging import (
+    API_URL_ENV,
     RecordSourceResource,
     RedcapSourceResource,
     StagingResource,
     SyntheticSourceResource,
-    redcap_staging,
+    build_staging_asset,
 )
 from janice_pipeline.orchestration.synthetic import synthetic_redcap_export
-from janice_pipeline.redcap.client import DEFAULT_SERVER_TIMEZONE
+from janice_pipeline.projects.registry import REGISTRY_ENV, load_projects
 
 
 def source_from_env(env: Mapping[str, str]) -> RecordSourceResource:
@@ -34,10 +36,7 @@ def source_from_env(env: Mapping[str, str]) -> RecordSourceResource:
     if choice == "synthetic":
         return SyntheticSourceResource(dictionary_dir=str(data_dir(env)))
     if choice == "redcap":
-        return RedcapSourceResource(
-            api_url=env.get("REDCAP_API_URL", ""),
-            server_timezone=env.get("REDCAP_SERVER_TIMEZONE", DEFAULT_SERVER_TIMEZONE),
-        )
+        return RedcapSourceResource(default_api_url=env.get(API_URL_ENV, ""))
     raise ValueError(f"JANICE_SOURCE must be 'synthetic' or 'redcap', not {choice!r}")
 
 
@@ -46,8 +45,9 @@ def data_dir(env: Mapping[str, str]) -> Path:
 
 
 def build_defs(env: Mapping[str, str]) -> dg.Definitions:
+    projects = load_projects(env.get(REGISTRY_ENV) or None)
     return dg.Definitions(
-        assets=[synthetic_redcap_export, redcap_staging],
+        assets=[synthetic_redcap_export, build_staging_asset(projects)],
         resources={
             "source": source_from_env(env),
             "staging": StagingResource(data_dir=str(data_dir(env))),

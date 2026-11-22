@@ -60,7 +60,7 @@ def test_redcap_source_is_used_when_asked_for():
     source = source_from_env(env)
 
     assert isinstance(source, RedcapSourceResource)
-    assert source.server_timezone == "UTC"
+    assert source.default_api_url == "https://redcap.example.org/api/"
 
 
 def test_an_unknown_source_is_refused():
@@ -73,3 +73,17 @@ def test_data_files_live_outside_the_repository_by_default(tmp_path):
 
     staging = defs_for_test.resources["staging"]
     assert staging.db_path("neonatal") == tmp_path / "staging_neonatal.duckdb"
+
+
+def test_partitions_come_from_the_project_registry(tmp_path):
+    registry = tmp_path / "projects.yaml"
+    registry.write_text(
+        "projects:\n"
+        "  - key: neonatal\n    site_field: hosp_id\n"
+        "  - key: kilifi_nbu\n    site_field: facility_code\n"
+    )
+
+    defs_for_test = build_defs({"JANICE_PROJECTS_FILE": str(registry)})
+
+    asset = defs_for_test.resolve_assets_def("redcap_staging")
+    assert asset.partitions_def.get_partition_keys() == ["neonatal", "kilifi_nbu"]
