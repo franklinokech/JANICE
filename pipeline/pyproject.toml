@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "dagster>=1.13.31",
+    "dagster-dbt>=0.29.31",
     "dbt-core>=1.12.7",
     "dbt-postgres>=1.11.0",
     "duckdb>=2.0.1",

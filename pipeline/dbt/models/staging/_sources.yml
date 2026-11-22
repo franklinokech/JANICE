@@ -9,6 +9,12 @@ sources:
         description: >
           One row per REDCap record or repeat instance, for every project.
           Fields are in the JSONB column data, with blank values left out.
+        # In Dagster, this table is what the warehouse_raw asset writes, so the
+        # dbt models run after it
+        config:
+          meta:
+            dagster:
+              asset_key: ["warehouse_raw"]
         columns:
           - name: project
             data_tests: [not_null]

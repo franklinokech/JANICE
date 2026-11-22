@@ -20,6 +20,11 @@ from pathlib import Path
 
 import dagster as dg
 
+from janice_pipeline.orchestration.dbt import (
+    build_warehouse_models,
+    dbt_resource,
+    warehouse_models,
+)
 from janice_pipeline.orchestration.staging import (
     API_URL_ENV,
     RecordSourceResource,
@@ -58,12 +63,14 @@ def build_defs(env: Mapping[str, str]) -> dg.Definitions:
             synthetic_redcap_export,
             build_staging_asset(projects),
             build_warehouse_asset(projects),
+            warehouse_models,
         ],
-        jobs=[build_ingest_job()],
+        jobs=[build_ingest_job(), build_warehouse_models],
         resources={
             "source": source_from_env(env),
             "staging": StagingResource(data_dir=str(data_dir(env))),
             "warehouse": WarehouseResource(),
+            "dbt": dbt_resource(),
         },
     )
 

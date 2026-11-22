@@ -1,6 +1,8 @@
 # How dbt connects to Postgres. No secrets here: everything comes from the same
 # POSTGRES_* variables as the backend and the pipeline (the git-ignored .env
-# locally; real secrets on servers).
+# locally; real secrets on servers). The defaults only let `dbt parse` run
+# without a database (Dagster needs the manifest to load); a real run without
+# POSTGRES_PASSWORD fails to connect.
 janice:
   target: default
   outputs:
@@ -8,8 +10,8 @@ janice:
       type: postgres
       host: "{{ env_var('POSTGRES_HOST', 'localhost') }}"
       port: "{{ env_var('POSTGRES_PORT', '5432') | as_number }}"
-      dbname: "{{ env_var('POSTGRES_DB') }}"
-      user: "{{ env_var('POSTGRES_USER') }}"
-      password: "{{ env_var('POSTGRES_PASSWORD') }}"
+      dbname: "{{ env_var('POSTGRES_DB', 'janice') }}"
+      user: "{{ env_var('POSTGRES_USER', 'janice') }}"
+      password: "{{ env_var('POSTGRES_PASSWORD', '') }}"
       schema: public
       threads: 4
