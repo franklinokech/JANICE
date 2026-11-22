@@ -48,7 +48,7 @@ Seventeen design questions were settled on 19 Nov 2026; the rest of this documen
 | Inference | Hosted LLM: Claude API for the pilot | MCP server |
 | Hosting | KWTRP servers, operated by the CIN data managers | Deployment and operations |
 | Packaging | Every component runs in Docker containers | Deployment and operations |
-| Pilot scope | All three units (maternity, neonatal, paediatrics), five indicators | Transformation |
+| Pilot scope | Data from all three units; five neonatal indicators first, verified against the real data dictionary (paediatrics and maternity indicators after their dictionaries are reviewed) | Transformation |
 | Research | A JANICE evaluation paper will follow the pilot | Evaluation and roadmap |
 | Orchestration | Dagster (open source, self-hosted) runs the pipeline | Data ingestion |
 | Ways of working | Agile, two-week sprints; CI/CD, TDD, security-first | Engineering practices |
@@ -230,17 +230,21 @@ Each QI indicator is defined once, in a dbt seed or YAML file reviewed by the cl
 
 ### Pilot indicators
 
-Five indicators are recommended for the pilot. Together they cover all three units, mix process and outcome measures, and build on care processes CIN already audits ([adherence indicators](https://gh.bmj.com/content/2/4/e000468.abstract), [neonatal prescribing and data quality](https://econpapers.repec.org/RePEc:plo:pgph00:0000673)). Each needs its source fields confirmed against the current CIN data dictionary before it is built.
+The pilot starts with five **neonatal** indicators, every field verified against the real CIN Standard Neonatal Tool data dictionary (22 Nov 2026). They mix outcome and process measures, use fields collected on every record wherever possible, and build on care CIN already audits ([adherence indicators](https://gh.bmj.com/content/2/4/e000468.abstract), [neonatal prescribing and data quality](https://econpapers.repec.org/RePEc:plo:pgph00:0000673)). Paediatrics and maternity indicators follow once their dictionaries have been reviewed the same way; their data is ingested from the start.
 
-| # | Indicator | Unit | Type | Numerator | Denominator | Desired direction |
+| # | Indicator | Type | Numerator | Denominator | Fields | Better |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | Core admission signs documented | Paediatrics | Process | Admissions with all agreed core signs recorded (e.g. temperature, respiratory rate, pulse, oxygen saturation, level of consciousness) | Admissions aged 2 to 59 months | Higher |
-| 2 | Pneumonia treated to guideline | Paediatrics | Process | Pneumonia cases given the antibiotic regimen recommended for their severity class in the Kenyan paediatric guidelines | Pneumonia cases aged 2 to 59 months with a severity class recorded | Higher |
-| 3 | Hypothermia on admission | Neonatal | Process and outcome | Neonates with admission temperature below 36.5 °C | Neonates with admission temperature recorded | Lower |
-| 4 | Neonatal case fatality by birth weight | Neonatal | Outcome | Deaths, per birth-weight band (under 1000 g, 1000 to 1499 g, 1500 to 2499 g, 2500 g and over) | Admissions with known outcome in that band | Lower |
-| 5 | Uterotonic given in third stage | Maternity | Process | Vaginal deliveries where a uterotonic (e.g. oxytocin) is recorded for the third stage | Vaginal deliveries | Higher |
+| 1 | Case fatality by birth-weight band | Outcome | Deaths, per band (under 1000, 1000 to 1499, 1500 to 2499, 2500 g and over) | Alive or dead at discharge in that band | `outcome`, `birth_wt`, `birth_wt_units` | Lower |
+| 2 | Hypothermia on admission | Process and outcome | Admission temperature below 36.5 °C | Admission temperature recorded | `temperature_degrees_celciu` | Lower |
+| 3 | Kangaroo mother care for babies under 2000 g | Process | KMC given | Birth weight under 2000 g, discharged alive | `k_mother_care`, `birth_wt`, `outcome` | Higher |
+| 4 | Antenatal corticosteroids for preterm babies | Process | Mother given antenatal corticosteroids | Gestation under 34 weeks | `mother_anten_corti`, `gest` | Higher |
+| 5 | Oxygen saturation measured at admission | Process | Saturation documented | Full-form admissions | `oxygen_saturation_measured` | Higher |
 
-Each indicator also reports its documentation completeness (share of the denominator where the numerator field was recorded), so a fall in performance can be told apart from a fall in recording. If the maternity form does not capture uterotonic use reliably, partograph use is the fallback for indicator 5.
+Each indicator also reports its documentation completeness (share of the denominator where the numerator field was recorded), so a fall in performance can be told apart from a fall in recording. Case fatality also reports the share of admissions with an unknown outcome (referred, absconded, discharged against advice), which are left out of its denominator; the definition must match CIN's published reports for Gate 1.
+
+**Reading the neonatal form correctly.** `stg_neonatal__admissions` cleans these fields once for every indicator: the form's sentinels (`-1` for numbers and codes, `1914-01-01` for dates) become empty values, weights become grams (the units question is optional, so a missing unit is inferred from the value), and yes/no codes become booleans (their "no" code differs between fields). Minimum records hide many fields (branching on `[is_minimum] = '0'`), so indicators using those fields, such as indicator 5, count only full-form records in their denominators. About 20 fields have branching logic that can never be true (for example `[is_minimum] = '0' and [is_minimum] = '1'`) and most of the fluids and feeds section is hidden; no indicator uses them, and a dbt test warns if any starts receiving data.
+
+**Next wave**, from the same form: case fatality by gestation band, hypoxaemic babies (saturation below 90%) given oxygen, hypothermia during the stay (`lowest_temperature`), blood culture organisms for resistance surveillance, and length of stay. Later, once diagnoses are coded and governance allows: first-line antibiotics for suspected sepsis, gentamicin dose per kg, caffeine for babies under 32 weeks, and ARVs for HIV-exposed babies. Vitamin K and chlorhexidine cord care are recorded at only 11 hospitals, so they cannot be compared network-wide.
 
 **Sign-off.** An indicator review group (the CIN clinical lead for each unit, one QI lead from a pilot hospital and a CIN data manager) approves each definition and version. dbt builds only indicators marked approved in the catalogue.
 
@@ -928,7 +932,7 @@ Each phase starts only when the gate before it is met; dates are in the Delivery
 - [x] Site is recorded in the hosp\_id field (confirmed)
 - [ ] Should maternity and neonatal records be linked (mother and baby)? Needs governance approval
 - [ ] Are all direct identifiers, including free-text fields, flagged in the metadata? (audit with the CIN data managers)
-- [ ] Do the current forms capture the fields the five pilot indicators need, especially uterotonic use in maternity?
+- [ ] Do the paediatrics and maternity forms capture the fields their indicators need, especially uterotonic use in maternity? (Neonatal confirmed 22 Nov 2026.)
 - [ ] Who sits on the indicator review group?
 - [ ] Which sites take part in the pilot, and who holds each role there?
 - [ ] Suppression defaults agreed with the KWTRP data protection officer
