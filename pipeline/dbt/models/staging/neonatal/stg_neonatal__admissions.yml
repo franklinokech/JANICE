@@ -1,0 +1,95 @@
+models:
+  - name: stg_neonatal__admissions
+    description: >
+      One row per neonatal admission, with the indicator fields cleaned:
+      sentinels as NULL, weights in grams, yes/no as booleans.
+    columns:
+      - name: record_key
+        data_tests: [unique, not_null]
+      - name: site_id
+        data_tests: [not_null]
+      - name: outcome
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [alive, dead, referred, absconded, discharged_against_advice]
+      # Plausibility: warnings, so odd values reach the data managers
+      # without stopping the build
+      - name: birth_weight_g
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 300, max_value: 6000}
+              config: {severity: warn}
+      - name: gestation_weeks
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 22, max_value: 46}
+              config: {severity: warn}
+      - name: admission_temp_c
+        description: Degrees Celsius; values far outside 25 to 43 are likely typing errors.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 25, max_value: 43}
+              config: {severity: warn}
+      - name: admission_date
+        data_tests:
+          - not_null:
+              config: {severity: warn}
+
+unit_tests:
+  - name: sentinels_become_null
+    description: CIN's -1 and 1914-01-01 mean "not recorded".
+    model: stg_neonatal__admissions
+    given:
+      - input: ref('stg_redcap__records')
+        rows:
+          - {project: neonatal, record_id: "1", record_key: "neonatal:1", is_repeat_instance: false, site_id: "40",
+             data: '{"date_adm": "1914-01-01", "temperature_degrees_celciu": "-1", "birth_wt": "-1", "gest": "-1", "outcome": "-1", "mother_anten_corti": "-1"}'}
+    expect:
+      rows:
+        - {record_key: "neonatal:1", admission_date: null, admission_temp_c: null, birth_weight_g: null,
+           gestation_weeks: null, outcome: null, outcome_known: false, antenatal_steroids: null}
+
+  - name: weights_are_converted_to_grams
+    model: stg_neonatal__admissions
+    given:
+      - input: ref('stg_redcap__records')
+        rows:
+          - {project: neonatal, record_id: "1", record_key: "neonatal:1", is_repeat_instance: false, site_id: "40", data: '{"birth_wt": "2.4", "birth_wt_units": "2"}'}
+          - {project: neonatal, record_id: "2", record_key: "neonatal:2", is_repeat_instance: false, site_id: "40", data: '{"birth_wt": "1850", "birth_wt_units": "1"}'}
+          - {project: neonatal, record_id: "3", record_key: "neonatal:3", is_repeat_instance: false, site_id: "40", data: '{"birth_wt": "1.2"}'}
+          - {project: neonatal, record_id: "4", record_key: "neonatal:4", is_repeat_instance: false, site_id: "40", data: '{"birth_wt": "3100"}'}
+          - {project: neonatal, record_id: "5", record_key: "neonatal:5", is_repeat_instance: false, site_id: "40", data: '{"birth_wt": "50"}'}
+    expect:
+      rows:
+        - {record_key: "neonatal:1", birth_weight_g: 2400}
+        - {record_key: "neonatal:2", birth_weight_g: 1850}
+        - {record_key: "neonatal:3", birth_weight_g: 1200}
+        - {record_key: "neonatal:4", birth_weight_g: 3100}
+        - {record_key: "neonatal:5", birth_weight_g: null}
+
+  - name: outcomes_and_yes_no_codes_are_decoded
+    description: k_mother_care is yes=1/no=0; mother_anten_corti is yes=1/no=2.
+    model: stg_neonatal__admissions
+    given:
+      - input: ref('stg_redcap__records')
+        rows:
+          - {project: neonatal, record_id: "1", record_key: "neonatal:1", is_repeat_instance: false, site_id: "40",
+             data: '{"outcome": "2", "k_mother_care": "0", "mother_anten_corti": "2", "is_minimum": "0"}'}
+          - {project: neonatal, record_id: "2", record_key: "neonatal:2", is_repeat_instance: false, site_id: "40",
+             data: '{"outcome": "3", "k_mother_care": "1", "mother_anten_corti": "1", "is_minimum": "1"}'}
+    expect:
+      rows:
+        - {record_key: "neonatal:1", outcome: dead, outcome_known: true, died: true, kmc_given: false, antenatal_steroids: false, is_full_form: true}
+        - {record_key: "neonatal:2", outcome: referred, outcome_known: false, died: false, kmc_given: true, antenatal_steroids: true, is_full_form: false}
+
+  - name: other_projects_are_left_out
+    model: stg_neonatal__admissions
+    given:
+      - input: ref('stg_redcap__records')
+        rows:
+          - {project: neonatal, record_id: "1", record_key: "neonatal:1", is_repeat_instance: false, site_id: "40", data: '{}'}
+          - {project: maternity, record_id: "1", record_key: "maternity:1", is_repeat_instance: false, site_id: "40", data: '{}'}
+    expect:
+      rows:
+        - {record_key: "neonatal:1"}
