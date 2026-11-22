@@ -5,13 +5,14 @@ Every project lands in one table, <schema>.redcap_records, one row per record
 structure without any change to the warehouse; dbt picks out the fields.
 """
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
 import pytest
 from psycopg import sql
 
-from janice_pipeline.warehouse.postgres_load import PostgresSettings, load_project
+from janice_pipeline.warehouse.postgres_load import PostgresSettings, load_project, read_watermark
 
 
 def make_staging(path: Path, project: str, rows: list[dict[str, str]]) -> Path:
@@ -235,3 +236,94 @@ def test_settings_come_from_the_backends_postgres_variables():
 def test_a_missing_password_names_the_variable():
     with pytest.raises(ValueError, match="POSTGRES_PASSWORD"):
         PostgresSettings.from_env({"POSTGRES_DB": "janice", "POSTGRES_USER": "janice"})
+
+
+# --- Incremental loads -----------------------------------------------------
+# A staging file holding only changed records replaces just those records
+# (every row of each, so a removed repeat instance disappears too), and each
+# successful load records the project's watermark for the next run.
+
+
+STARTED = datetime(2026, 11, 23, 23, 0, tzinfo=UTC)
+
+
+def add_stage_info(path, mode, started_at=STARTED, changed_since=None):
+    with duckdb.connect(str(path)) as con:
+        con.execute(
+            "CREATE TABLE _stage_info AS SELECT ? AS mode, ?::TIMESTAMPTZ AS started_at, "
+            "?::TIMESTAMPTZ AS changed_since",
+            [mode, started_at, changed_since],
+        )
+    return path
+
+
+def load(path, settings, schema, project="neonatal"):
+    return load_project(
+        path, project_key=project, settings=settings, schema=schema, site_field="hosp_id"
+    )
+
+
+def test_changes_replace_only_the_staged_records(tmp_path, warehouse):
+    settings, schema, conn = warehouse
+    load(add_stage_info(make_staging(tmp_path / "f.duckdb", "neonatal", NEONATAL), "full"),
+         settings, schema)  # fmt: skip
+    changed = [{"record_id": "2", "hosp_id": "H02", "outcome": "1", "weight": "1.9"}]
+    staging = add_stage_info(make_staging(tmp_path / "c.duckdb", "neonatal", changed), "changes")
+
+    result = load(staging, settings, schema)
+
+    assert result.mode == "changes"
+    rows = fetch(
+        conn, schema, "SELECT record_id, data->>'outcome' FROM {schema}.redcap_records ORDER BY 1"
+    )
+    assert rows == [("1", "1"), ("2", "1")]  # record 1 untouched, record 2 updated
+
+
+def test_a_removed_repeat_instance_disappears(tmp_path, warehouse):
+    settings, schema, conn = warehouse
+    base = {"record_id": "10", "redcap_repeat_instrument": "", "redcap_repeat_instance": ""}
+    two_instances = [
+        {**base, "hosp_id": "H01"},
+        {
+            **base,
+            "redcap_repeat_instrument": "prev_preg",
+            "redcap_repeat_instance": "1",
+            "hosp_id": "",
+        },
+    ]
+    one_instance = two_instances[:1]
+    full = make_staging(tmp_path / "f.duckdb", "maternity", two_instances)
+    load(add_stage_info(full, "full"), settings, schema, project="maternity")
+
+    changes = make_staging(tmp_path / "c.duckdb", "maternity", one_instance)
+    load(add_stage_info(changes, "changes"), settings, schema, project="maternity")
+
+    assert fetch(conn, schema, "SELECT count(*) FROM {schema}.redcap_records") == [(1,)]
+
+
+def test_each_load_records_the_watermark_for_the_next_run(tmp_path, warehouse):
+    settings, schema, _ = warehouse
+    staging = add_stage_info(make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL), "full")
+
+    load(staging, settings, schema)
+
+    assert read_watermark(settings, "neonatal", schema=schema) == STARTED
+    assert read_watermark(settings, "maternity", schema=schema) is None
+
+
+def test_before_the_first_load_there_is_no_watermark(warehouse):
+    # The raw tables do not even exist yet: the first run is a full load
+    settings, schema, _ = warehouse
+
+    assert read_watermark(settings, "neonatal", schema=schema) is None
+
+
+def test_an_older_staging_file_without_stage_info_is_a_full_load(tmp_path, warehouse):
+    settings, schema, conn = warehouse
+    staging = make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL)
+
+    result = load(staging, settings, schema)
+
+    assert result.mode == "full"
+    # Its start time is unknown, so no watermark is recorded
+    assert read_watermark(settings, "neonatal", schema=schema) is None
