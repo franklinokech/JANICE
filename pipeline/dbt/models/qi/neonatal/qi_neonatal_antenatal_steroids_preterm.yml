@@ -1,0 +1,107 @@
+models:
+  - name: qi_neonatal_antenatal_steroids_preterm
+    description: >
+      Pilot indicator 4. Preterm babies (gestation under 34 weeks) whose
+      mothers were given antenatal corticosteroids, per site, admission month
+      and place of birth. Higher is better.
+    config:
+      meta:
+        indicator_id: neo_antenatal_steroids_preterm
+        name: Antenatal corticosteroids for preterm babies
+        version: "1.0"
+        status: draft
+        unit: neonatal
+        type: process
+        desired_direction: higher
+        definition: >
+          The share of babies born at 24 to 33 weeks of gestation whose mothers
+          were recorded as receiving antenatal corticosteroids before delivery.
+        numerator:
+          column: steroids_given
+          description: Eligible babies whose mothers were recorded as given antenatal corticosteroids.
+        denominator:
+          column: eligible
+          description: Babies with a gestation of 24 to 33 weeks, whatever their outcome.
+        exclusions:
+          - Babies under 24 weeks, outside the window in which WHO recommends antenatal corticosteroids.
+          - Gestations outside 22 to 46 weeks (likely typing errors) and missing gestations, which cannot decide eligibility. Both are counted and reported.
+          - Admissions without a usable admission date.
+        completeness: >
+          The share of eligible babies with the antenatal corticosteroids
+          question answered, yes or no (steroids_recorded / eligible). Not
+          documented counts as not given.
+        breakdowns:
+          - "Place of birth: inborn (the admitting hospital cared for the mother), born outside the facility, or not recorded. Inborn babies reflect the hospital's own maternity care."
+        fields: [mother_anten_corti, gest, bba, date_adm, hosp_id]
+        rationale: >
+          Antenatal corticosteroids given to women at risk of preterm birth
+          reduce neonatal death and respiratory distress in babies born early.
+          The indicator links maternity care to newborn outcomes. WHO recommends
+          them only when certain conditions are met (gestational age reliably
+          assessed, birth imminent, no maternal infection, adequate care for
+          mother and newborn), so 100% is not the expected target; trends and
+          the inborn breakdown matter more than the level.
+        references:
+          - title: "WHO recommendations on antenatal corticosteroids for improving preterm birth outcomes (2022)"
+            url: "https://www.who.int/publications/i/item/9789240057296"
+    columns:
+      - name: site_id
+        data_tests: [not_null]
+      - name: admission_month
+        data_tests: [not_null]
+      - name: place_of_birth
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [inborn, born_outside, place_not_recorded]
+      - name: steroids_given
+        description: Numerator.
+      - name: eligible
+        description: Denominator.
+      - name: steroids_rate
+        description: steroids_given / eligible, to 4 decimal places; NULL when no baby was eligible.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+      - name: documentation_completeness
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+
+unit_tests:
+  - name: steroids_among_babies_under_34_weeks
+    description: >
+      Eligibility edges: 24 and 33 weeks are eligible; 23 (plausible) and 34
+      are not; 21 is implausible.
+      A baby who died is still eligible. Not documented counts as not given.
+    model: qi_neonatal_antenatal_steroids_preterm
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 33, antenatal_steroids: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 28, antenatal_steroids: false, died: true}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 30, antenatal_steroids: null, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 34, antenatal_steroids: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 21, antenatal_steroids: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 23, antenatal_steroids: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 24, antenatal_steroids: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: null, antenatal_steroids: true, died: false}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, place_of_birth: inborn, admissions: 8,
+           gestation_not_recorded: 1, implausible_gestation: 1, eligible: 4, steroids_recorded: 3,
+           steroids_given: 2, steroids_rate: "0.5000", documentation_completeness: "0.7500"}
+
+  - name: place_of_birth_is_reported_separately
+    model: qi_neonatal_antenatal_steroids_preterm
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: false, gestation_weeks: 30, antenatal_steroids: true}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: true, gestation_weeks: 30, antenatal_steroids: false}
+          - {site_id: "40", admission_month: 2026-03-01, born_outside: null, gestation_weeks: 38, antenatal_steroids: null}
+    expect:
+      rows:
+        - {place_of_birth: inborn, eligible: 1, steroids_given: 1, steroids_rate: "1.0000"}
+        - {place_of_birth: born_outside, eligible: 1, steroids_given: 0, steroids_rate: "0.0000"}
+        - {place_of_birth: place_not_recorded, eligible: 0, steroids_given: 0, steroids_rate: null}

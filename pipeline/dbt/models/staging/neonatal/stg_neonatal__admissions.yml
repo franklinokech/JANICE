@@ -75,13 +75,13 @@ unit_tests:
       - input: ref('stg_redcap__records')
         rows:
           - {project: neonatal, record_id: "1", record_key: "neonatal:1", is_repeat_instance: false, site_id: "40",
-             data: '{"outcome": "2", "k_mother_care": "0", "mother_anten_corti": "2", "is_minimum": "0"}'}
+             data: '{"outcome": "2", "k_mother_care": "0", "mother_anten_corti": "2", "is_minimum": "0", "bba": "0"}'}
           - {project: neonatal, record_id: "2", record_key: "neonatal:2", is_repeat_instance: false, site_id: "40",
-             data: '{"outcome": "3", "k_mother_care": "1", "mother_anten_corti": "1", "is_minimum": "1"}'}
+             data: '{"outcome": "3", "k_mother_care": "1", "mother_anten_corti": "1", "is_minimum": "1", "bba": "1"}'}
     expect:
       rows:
-        - {record_key: "neonatal:1", outcome: dead, outcome_known: true, died: true, kmc_given: false, antenatal_steroids: false, is_full_form: true}
-        - {record_key: "neonatal:2", outcome: referred, outcome_known: false, died: false, kmc_given: true, antenatal_steroids: true, is_full_form: false}
+        - {record_key: "neonatal:1", outcome: dead, outcome_known: true, died: true, kmc_given: false, antenatal_steroids: false, is_full_form: true, born_outside: false}
+        - {record_key: "neonatal:2", outcome: referred, outcome_known: false, died: false, kmc_given: true, antenatal_steroids: true, is_full_form: false, born_outside: true}
 
   - name: other_projects_are_left_out
     model: stg_neonatal__admissions
