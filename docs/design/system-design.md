@@ -237,7 +237,7 @@ The pilot starts with five **neonatal** indicators, every field verified against
 | 1 | Case fatality by birth-weight band | Outcome | Deaths, per band (under 1000, 1000 to 1499, 1500 to 2499, 2500 g and over) | Alive or dead at discharge in that band | `outcome`, `birth_wt`, `birth_wt_units` | Lower |
 | 2 | Hypothermia on admission | Process and outcome | Admission temperature below 36.5 °C | Admission temperature recorded | `temperature_degrees_celciu` | Lower |
 | 3 | Kangaroo mother care for babies under 2000 g | Process | KMC given | Birth weight under 2000 g, discharged alive | `k_mother_care`, `birth_wt`, `outcome` | Higher |
-| 4 | Antenatal corticosteroids for preterm babies | Process | Mother given antenatal corticosteroids | Gestation under 34 weeks | `mother_anten_corti`, `gest` | Higher |
+| 4 | Antenatal corticosteroids for preterm babies | Process | Mother given antenatal corticosteroids | Gestation 24 to 33 weeks (the WHO 2022 window), by place of birth | `mother_anten_corti`, `gest` | Higher |
 | 5 | Oxygen saturation measured at admission | Process | Saturation documented | Full-form admissions | `oxygen_saturation_measured` | Higher |
 
 Each indicator also reports its documentation completeness (share of the denominator where the numerator field was recorded), so a fall in performance can be told apart from a fall in recording. Case fatality also reports the share of admissions with an unknown outcome (referred, absconded, discharged against advice), which are left out of its denominator; the definition must match CIN's published reports for Gate 1.
