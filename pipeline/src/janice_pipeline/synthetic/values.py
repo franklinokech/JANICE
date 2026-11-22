@@ -62,10 +62,11 @@ def _text_value(field: Field, rng: random.Random, record_number: int) -> str:
     validation = field.validation
 
     if validation == "integer":
-        return str(rng.randint(_int(field.minimum, 0), _int(field.maximum, 100)))
+        low, high = _limits(_int(field.minimum), _int(field.maximum), 0, 100, 100)
+        return str(rng.randint(low, high))
 
     if validation in DECIMAL_PLACES:
-        low, high = _float(field.minimum, 0.0), _float(field.maximum, 100.0)
+        low, high = _limits(_float(field.minimum), _float(field.maximum), 0.0, 100.0, 100.0)
         places = DECIMAL_PLACES[validation]
         value = round(rng.uniform(low, high), places)
         return f"{min(max(value, low), high):.{places}f}"
@@ -93,25 +94,45 @@ def _text_value(field: Field, rng: random.Random, record_number: int) -> str:
 
 
 def _random_date(field: Field, rng: random.Random) -> date:
-    start = _date(field.minimum, DEFAULT_START)
-    end = _date(field.maximum, DEFAULT_END)
+    start, end = _limits(
+        _date(field.minimum), _date(field.maximum), DEFAULT_START, DEFAULT_END, timedelta(days=365)
+    )
     return start + timedelta(days=rng.randint(0, (end - start).days))
 
 
-def _int(raw: str, default: int) -> int:
-    return int(raw) if raw.lstrip("-").isdigit() else default
+def _limits(low, high, default_low, default_high, width):
+    """The range to draw from, given the limits REDCap sets (None when not set).
+
+    A missing limit comes from the default range, unless that would put it on
+    the wrong side of the limit that is set (e.g. a minimum of 1975 with the
+    default maximum of 100); then it is ``width`` beyond that limit instead.
+    """
+    if low is not None and high is not None:
+        return min(low, high), max(low, high)
+    if low is not None:
+        return low, max(default_high, low + width)
+    if high is not None:
+        return min(default_low, high - width), high
+    return default_low, default_high
 
 
-def _float(raw: str, default: float) -> float:
+# REDCap also allows limits it works out itself, such as "today", "now" or a
+# piped [field]; anything that isn't a plain value counts as "not set"
+
+
+def _int(raw: str) -> int | None:
+    return int(raw) if raw.lstrip("-").isdigit() else None
+
+
+def _float(raw: str) -> float | None:
     try:
         return float(raw)
     except ValueError:
-        return default
+        return None
 
 
-def _date(raw: str, default: date) -> date:
-    # REDCap allows limits such as "today"; anything that isn't a date uses the default
+def _date(raw: str) -> date | None:
     try:
         return date.fromisoformat(raw)
     except ValueError:
-        return default
+        return None
