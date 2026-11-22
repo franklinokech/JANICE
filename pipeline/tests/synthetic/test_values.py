@@ -146,3 +146,59 @@ def test_required_fields_are_never_blank():
     (values,) = values_for(field, missing_rate=1.0)
 
     assert values["weight"] != ""
+
+
+# REDCap fields often set only one limit, e.g. a year of birth with minimum
+# 1975 and no maximum. The missing limit must come from the one that is set,
+# not from a fixed default that can end up on the wrong side of it.
+
+
+def test_integer_with_only_a_minimum_above_the_default_range():
+    field = Field("birth_year", "mother", "text", validation="integer", minimum="1975")
+
+    years = [int(v["birth_year"]) for v in values_for(field, runs=200)]
+
+    assert min(years) >= 1975
+
+
+def test_integer_with_only_a_maximum_below_the_default_range():
+    field = Field("deficit", "labs", "text", validation="integer", maximum="-10")
+
+    values = [int(v["deficit"]) for v in values_for(field, runs=200)]
+
+    assert max(values) <= -10
+
+
+def test_integer_with_a_limit_redcap_computes_uses_the_other_limit():
+    # "today" and piped values such as [admit_year] are not numbers
+    field = Field(
+        "birth_year", "mother", "text", validation="integer", minimum="1975", maximum="[year]"
+    )
+
+    years = [int(v["birth_year"]) for v in values_for(field, runs=200)]
+
+    assert min(years) >= 1975
+
+
+def test_number_with_only_a_minimum_above_the_default_range():
+    field = Field("weight_g", "baby", "text", validation="number", minimum="500")
+
+    weights = [float(v["weight_g"]) for v in values_for(field, runs=200)]
+
+    assert min(weights) >= 500
+
+
+def test_date_with_only_a_minimum_after_the_default_range():
+    field = Field("follow_up", "visit", "text", validation="date_ymd", minimum="2030-01-01")
+
+    dates = [date.fromisoformat(v["follow_up"]) for v in values_for(field, runs=200)]
+
+    assert min(dates) >= date(2030, 1, 1)
+
+
+def test_date_with_only_a_maximum_before_the_default_range():
+    field = Field("mother_dob", "mother", "text", validation="date_ymd", maximum="2008-12-31")
+
+    dates = [date.fromisoformat(v["mother_dob"]) for v in values_for(field, runs=200)]
+
+    assert max(dates) <= date(2008, 12, 31)
