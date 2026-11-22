@@ -1,0 +1,65 @@
+models:
+  - name: qi_neonatal_kmc_under_2000g
+    description: >
+      Pilot indicator 3. Kangaroo mother care given to babies with a birth
+      weight under 2000 g who were discharged alive, per site and admission
+      month. Higher is better.
+    config:
+      meta:
+        indicator_id: neo_kmc_under_2000g
+        unit: neonatal
+        type: process
+        desired_direction: higher
+        numerator: kmc_given
+        denominator: eligible
+    columns:
+      - name: site_id
+        data_tests: [not_null]
+      - name: admission_month
+        data_tests: [not_null]
+      - name: kmc_rate
+        description: kmc_given / eligible, to 4 decimal places; NULL when no baby was eligible.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+      - name: documentation_completeness
+        description: Share of eligible babies with the KMC question answered (yes or no).
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+
+unit_tests:
+  - name: kmc_among_small_babies_discharged_alive
+    description: >
+      Eligibility edges: 1999 g is eligible, 2000 g is not, 299 g is
+      implausible. Deaths and referrals are not eligible. KMC not documented
+      counts as not given but lowers completeness.
+    model: qi_neonatal_kmc_under_2000g
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 1999, kmc_given: true}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 1200, kmc_given: false}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 1500, kmc_given: null}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 2000, kmc_given: true}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 299, kmc_given: true}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: null, kmc_given: true}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: dead, birth_weight_g: 900, kmc_given: false}
+          - {site_id: "40", admission_month: 2026-03-01, outcome: referred, birth_weight_g: 1100, kmc_given: false}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, discharged_alive: 6, weight_not_recorded: 1,
+           implausible_weight: 1, eligible: 3, kmc_recorded: 2, kmc_given: 1,
+           kmc_rate: "0.3333", documentation_completeness: "0.6667"}
+
+  - name: a_month_with_no_eligible_baby_has_no_rate
+    model: qi_neonatal_kmc_under_2000g
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 3200, kmc_given: false}
+          - {site_id: "41", admission_month: 2026-03-01, outcome: alive, birth_weight_g: 1600, kmc_given: true}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, eligible: 0, kmc_rate: null, documentation_completeness: null}
+        - {site_id: "41", admission_month: 2026-03-01, eligible: 1, kmc_rate: "1.0000", documentation_completeness: "1.0000"}
