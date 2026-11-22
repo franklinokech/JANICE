@@ -63,6 +63,8 @@ def build_warehouse_asset(projects: list[Project]) -> dg.AssetsDefinition:
                 "table": f"{warehouse.schema_name}.redcap_records",
                 "records": result.records,
                 "rows": result.rows,
+                "mode": result.mode,
+                "deleted": result.deleted,
             }
         )
 

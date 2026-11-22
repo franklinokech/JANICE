@@ -299,3 +299,52 @@ def test_a_time_without_a_time_zone_is_refused():
 
     with pytest.raises(ValueError, match="time zone"):
         client.export_record_ids("record_id", changed_since=datetime(2026, 11, 20, 18, 0))
+
+
+# --- Deleted records ---------------------------------------------------------
+# A deleted record never shows up as "changed", so incremental runs read
+# REDCap's logging for record deletions (needs the API "logging export" right).
+
+
+def test_deleted_records_are_read_from_the_log_in_server_time():
+    seen = {}
+
+    def handler(request):
+        seen.update(form_data(request))
+        return httpx.Response(200, json=[])
+
+    since = datetime(2026, 11, 21, 0, 30, 45, tzinfo=ZoneInfo("Africa/Nairobi"))
+    fake_redcap(handler).export_deleted_record_ids(since)
+
+    assert seen["content"] == "log"
+    assert seen["logtype"] == "record_delete"
+    # REDCap takes minutes; rounding down only widens the window
+    assert seen["beginTime"] == "2026-11-20 21:30"
+
+
+def test_deleted_record_ids_come_back_once_each_in_order():
+    log = [
+        {"timestamp": "2026-11-21 08:00", "action": "Delete record 4012", "record": "4012"},
+        {"timestamp": "2026-11-21 09:00", "action": "Delete record 4013", "record": "4013"},
+        {"timestamp": "2026-11-21 10:00", "action": "Delete record 4012", "record": "4012"},
+    ]
+    client = fake_redcap(lambda request: httpx.Response(200, json=log))
+
+    assert client.export_deleted_record_ids(datetime(2026, 11, 21, tzinfo=UTC)) == [
+        "4012",
+        "4013",
+    ]
+
+
+def test_older_redcap_versions_name_the_record_only_in_the_action():
+    log = [{"timestamp": "2026-11-21 08:00", "action": "Deleted Record 4012", "details": ""}]
+    client = fake_redcap(lambda request: httpx.Response(200, json=log))
+
+    assert client.export_deleted_record_ids(datetime(2026, 11, 21, tzinfo=UTC)) == ["4012"]
+
+
+def test_the_deletion_window_needs_a_time_zone():
+    client = fake_redcap(lambda request: httpx.Response(200, json=[]))
+
+    with pytest.raises(ValueError, match="time zone"):
+        client.export_deleted_record_ids(datetime(2026, 11, 21))

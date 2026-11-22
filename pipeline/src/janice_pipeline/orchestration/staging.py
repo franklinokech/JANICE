@@ -100,6 +100,9 @@ class _InMemorySource:
         for start in range(0, len(rows), batch_size):
             yield rows[start : start + batch_size]
 
+    def export_deleted_record_ids(self, since):
+        return []  # synthetic records are never deleted
+
 
 class StagingResource(dg.ConfigurableResource):
     """Where staged tables are written, and the key that protects identifiers."""
@@ -186,6 +189,7 @@ def build_staging_asset(projects: list[Project]) -> dg.AssetsDefinition:
         return dg.MaterializeResult(
             metadata={
                 "mode": result.mode,
+                "deleted_in_redcap": result.deleted,
                 "changed_since": changed_since.isoformat() if changed_since else "",
                 "table": result.table,
                 "records": result.records,
