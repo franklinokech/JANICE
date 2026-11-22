@@ -1,0 +1,8 @@
+# Where the webserver and daemon find the pipeline code: the "pipeline"
+# container serves it over gRPC. Runs execute in that container, so only it
+# holds the REDCap tokens and the hashing key.
+load_from:
+  - grpc_server:
+      host: pipeline
+      port: 4000
+      location_name: janice_pipeline

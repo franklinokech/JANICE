@@ -20,7 +20,7 @@ updates:
       github-actions:
         patterns: ["*"]
 
-  # Python packages in backend/pyproject.toml and backend/uv.lock
+  # Python packages in backend/ and pipeline/ (pyproject.toml and uv.lock)
   - package-ecosystem: "uv"
     directories:
       - "/backend"
@@ -39,11 +39,13 @@ updates:
       python-minor-and-patch:
         update-types: ["minor", "patch"]
 
-  # Base images in backend/Dockerfile
+  # Base images in backend/, frontend/ and pipeline/ Dockerfiles
+  # (pipeline/Dockerfile also pins the uv image, ghcr.io/astral-sh/uv)
   - package-ecosystem: "docker"
     directories:
       - "/backend"
       - "/frontend"
+      - "/pipeline"
     schedule:
       interval: "weekly"
       day: "monday"
