@@ -1,0 +1,70 @@
+models:
+  - name: qi_neonatal_hypothermia_on_admission
+    description: >
+      Pilot indicator 2. Neonates admitted with a temperature below 36.5 °C,
+      among those with a plausible admission temperature, per site and
+      admission month, graded mild, moderate and severe. Lower is better.
+    config:
+      meta:
+        indicator_id: neo_hypothermia_admission
+        unit: neonatal
+        type: process_and_outcome
+        desired_direction: lower
+        numerator: hypothermic
+        denominator: assessed
+    columns:
+      - name: site_id
+        data_tests: [not_null]
+      - name: admission_month
+        data_tests: [not_null]
+      - name: hypothermia_rate
+        description: hypothermic / assessed, to 4 decimal places; NULL when none assessed.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+      - name: documentation_completeness
+        description: Share of admissions with any admission temperature recorded.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+
+unit_tests:
+  - name: temperatures_are_graded_with_the_who_bands
+    description: >
+      Band edges: 36.5 is normal, 36.4 and 36.0 mild, 35.9 and 32.0 moderate,
+      31.9 severe. 4.2 is implausible and left out of the rate; a missing
+      temperature lowers completeness only.
+    model: qi_neonatal_hypothermia_on_admission
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 37.0}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 36.5}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 36.4}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 36.0}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 35.9}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 32.0}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 31.9}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 4.2}
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: null}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, admissions: 9, temp_recorded: 8,
+           implausible_temp: 1, assessed: 7, hypothermic: 5, mild: 2, moderate: 2, severe: 1,
+           hypothermia_rate: "0.7143", documentation_completeness: "0.8889"}
+
+  - name: sites_and_months_are_kept_apart
+    description: A site-month with no temperature recorded has no rate (not 0%).
+    model: qi_neonatal_hypothermia_on_admission
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, admission_temp_c: 35.0}
+          - {site_id: "41", admission_month: 2026-03-01, admission_temp_c: 37.0}
+          - {site_id: "40", admission_month: 2026-04-01, admission_temp_c: null}
+          - {site_id: "40", admission_month: null, admission_temp_c: 30.0}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, assessed: 1, hypothermic: 1, hypothermia_rate: "1.0000", documentation_completeness: "1.0000"}
+        - {site_id: "41", admission_month: 2026-03-01, assessed: 1, hypothermic: 0, hypothermia_rate: "0.0000", documentation_completeness: "1.0000"}
+        - {site_id: "40", admission_month: 2026-04-01, assessed: 0, hypothermic: 0, hypothermia_rate: null, documentation_completeness: "0.0000"}
