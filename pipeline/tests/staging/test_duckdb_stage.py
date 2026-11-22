@@ -201,6 +201,9 @@ class ChangedSource(FakeSource):
         ids = [row[record_id_field] for row in self.rows]
         return ids if changed_since is None else ids[:2]
 
+    def export_deleted_record_ids(self, since):
+        return []
+
 
 def stage_info(db_path):
     return query(db_path, "SELECT mode, changed_since, started_at FROM _stage_info")
@@ -248,3 +251,49 @@ def test_the_start_time_is_taken_before_reading_redcap(tmp_path):
 
     ((_, _, started_at),) = stage_info(db)
     assert started_at <= seen["at"]
+
+
+class SourceWithDeletions(ChangedSource):
+    def export_deleted_record_ids(self, since):
+        self.deleted_since = since
+        return ["9", "8"]
+
+
+def deleted(db_path):
+    return [r[0] for r in query(db_path, "SELECT record_id FROM _deleted_records ORDER BY 1")]
+
+
+def test_an_incremental_stage_lists_records_deleted_since_the_same_time(tmp_path):
+    db = tmp_path / "staging.duckdb"
+    source = SourceWithDeletions(count=3)
+    since = datetime(2026, 11, 20, 23, 0, tzinfo=UTC)
+
+    stage_project(source, project_key="neonatal", db_path=db, key=KEY, changed_since=since)
+
+    assert source.deleted_since == since
+    assert deleted(db) == ["8", "9"]
+
+
+def test_deleted_ids_are_hashed_like_staged_ids_when_the_record_id_is_flagged(tmp_path):
+    # Otherwise a deleted record's hashed rows could never be found and removed
+    id_field = {"field_name": "record_id", "form_name": "admission", "field_type": "text"}
+    flagged_id = [*fields_from_rows([{**id_field, "identifier": "y"}]), *FIELDS[1:]]
+    source = SourceWithDeletions(count=1)
+    source.export_metadata = lambda: flagged_id
+    db = tmp_path / "staging.duckdb"
+
+    stage_project(
+        source, project_key="neonatal", db_path=db, key=KEY,
+        changed_since=datetime(2026, 11, 20, tzinfo=UTC),
+    )  # fmt: skip
+
+    assert deleted(db) == sorted([hash_identifier("9", KEY), hash_identifier("8", KEY)])
+
+
+def test_a_full_stage_lists_no_deletions(tmp_path):
+    # A full load replaces the whole project, which removes deleted records anyway
+    db = tmp_path / "staging.duckdb"
+
+    stage_project(SourceWithDeletions(count=2), project_key="neonatal", db_path=db, key=KEY)
+
+    assert deleted(db) == []

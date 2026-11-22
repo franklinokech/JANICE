@@ -327,3 +327,45 @@ def test_an_older_staging_file_without_stage_info_is_a_full_load(tmp_path, wareh
     assert result.mode == "full"
     # Its start time is unknown, so no watermark is recorded
     assert read_watermark(settings, "neonatal", schema=schema) is None
+
+
+def add_deleted(path, record_ids):
+    with duckdb.connect(str(path)) as con:
+        con.execute("CREATE TABLE _deleted_records (record_id VARCHAR)")
+        con.executemany("INSERT INTO _deleted_records VALUES (?)", [[r] for r in record_ids])
+    return path
+
+
+def test_records_deleted_in_redcap_are_removed(tmp_path, warehouse):
+    settings, schema, conn = warehouse
+    load(add_stage_info(make_staging(tmp_path / "f.duckdb", "neonatal", NEONATAL), "full"),
+         settings, schema)  # fmt: skip
+    changes = make_staging(tmp_path / "c.duckdb", "neonatal", [{"record_id": "3", "hosp_id": "H01",
+                           "outcome": "1", "weight": "3.1"}])  # fmt: skip
+    add_deleted(add_stage_info(changes, "changes"), ["1"])
+
+    result = load(changes, settings, schema)
+
+    assert result.deleted == 1
+    ids = fetch(conn, schema, "SELECT record_id FROM {schema}.redcap_records ORDER BY 1")
+    assert ids == [("2",), ("3",)]
+    assert fetch(
+        conn, schema, "SELECT deleted FROM {schema}.loads ORDER BY loaded_at DESC LIMIT 1"
+    ) == [(1,)]
+
+
+def test_a_deleted_then_recreated_record_keeps_its_new_rows(tmp_path, warehouse):
+    # Deleted and created again within the window: the new record wins
+    settings, schema, conn = warehouse
+    load(add_stage_info(make_staging(tmp_path / "f.duckdb", "neonatal", NEONATAL), "full"),
+         settings, schema)  # fmt: skip
+    recreated = [{"record_id": "1", "hosp_id": "H09", "outcome": "2", "weight": "1.1"}]
+    changes = add_stage_info(make_staging(tmp_path / "c.duckdb", "neonatal", recreated), "changes")
+    add_deleted(changes, ["1"])
+
+    load(changes, settings, schema)
+
+    rows = fetch(
+        conn, schema, "SELECT record_id, data->>'hosp_id' FROM {schema}.redcap_records ORDER BY 1"
+    )
+    assert rows == [("1", "H09"), ("2", "H02")]

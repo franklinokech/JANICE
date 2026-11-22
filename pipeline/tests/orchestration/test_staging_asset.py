@@ -69,6 +69,9 @@ class FakeSource:
         for start in range(0, len(self.rows), batch_size):
             yield self.rows[start : start + batch_size]
 
+    def export_deleted_record_ids(self, since):
+        return []
+
 
 # What each run asked REDCap for: None (everything) or a time
 ASKED_SINCE: list = []

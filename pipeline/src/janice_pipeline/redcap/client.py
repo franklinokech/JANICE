@@ -8,6 +8,7 @@ the project, so it is a secret: it never appears in errors, logs or repr().
 REDCap API docs: on your REDCap server, under "API" -> "API Documentation".
 """
 
+import re
 from collections.abc import Iterator, Sequence
 from datetime import datetime
 from urllib.parse import urlparse
@@ -18,9 +19,7 @@ import httpx
 from janice_pipeline.synthetic.dictionary import Field, fields_from_rows
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
-
 DEFAULT_BATCH_SIZE = 500
-
 # REDCap reads dateRangeBegin in its server's local time. The KWTRP server
 # runs on UTC (Control Center, 21 Nov 2026); other servers may differ.
 DEFAULT_SERVER_TIMEZONE = "UTC"
@@ -78,6 +77,21 @@ class RedcapClient:
         # back once per instance) and, unlike set(), keeps the order
         return list(dict.fromkeys(row[record_id_field] for row in rows))
 
+    def export_deleted_record_ids(self, since: datetime) -> list[str]:
+        """IDs of records deleted since that moment, from REDCap's logging, each once.
+
+        Needs the API token's "logging export" right. REDCap reads beginTime
+        to the minute, so the window is rounded down (wider, never narrower).
+        """
+        rows = self._post(
+            {
+                "content": "log",
+                "logtype": "record_delete",
+                "beginTime": self._server_time(since)[:16],
+            }
+        )
+        return list(dict.fromkeys(filter(None, (_deleted_record_id(row) for row in rows))))
+
     def export_records(
         self, record_ids: Sequence[str], *, batch_size: int = DEFAULT_BATCH_SIZE
     ) -> Iterator[list[dict[str, str]]]:
@@ -104,6 +118,11 @@ class RedcapClient:
                 }
             )
 
+    def _server_time(self, moment: datetime) -> str:
+        if moment.tzinfo is None or moment.utcoffset() is None:
+            raise ValueError("times sent to REDCap need a time zone, e.g. datetime.now(UTC)")
+        return moment.astimezone(self.server_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
     def _post(self, params: dict[str, str]) -> list[dict[str, str]]:
         data = {"token": self._token, "format": "json", "returnFormat": "json", **params}
         try:
@@ -120,10 +139,17 @@ class RedcapClient:
         except ValueError:
             raise RedcapError("REDCap response was not valid JSON") from None
 
-    def _server_time(self, moment: datetime) -> str:
-        if moment.tzinfo is None or moment.utcoffset() is None:
-            raise ValueError("changed_since needs a time zone, e.g. datetime.now(UTC)")
-        return moment.astimezone(self.server_timezone).strftime("%Y-%m-%d %H:%M:%S")
+
+_DELETE_ACTION = re.compile(r"delete(?:d)?\s+record\s+(.+)$", re.IGNORECASE)
+
+
+def _deleted_record_id(row: dict[str, str]) -> str | None:
+    """The record a deletion log entry is about. Recent REDCap versions give it
+    in "record"; older ones only in the action text ("Delete record 4012")."""
+    if row.get("record"):
+        return str(row["record"]).strip()
+    match = _DELETE_ACTION.search(str(row.get("action", "")).strip())
+    return match.group(1).strip() if match else None
 
 
 def _as_list(name: str, values: Sequence[str]) -> dict[str, str]:

@@ -11,7 +11,10 @@ Incremental runs pass ``changed_since`` and stage only the records created or
 changed since then. The file records what it holds in a one-row table,
 _stage_info (mode "full" or "changes", started_at, changed_since), so the load
 knows whether to replace the whole project or only those records, and which
-watermark to keep for the next run.
+watermark to keep for the next run. Incremental runs also list the records
+deleted in REDCap since the same moment (_deleted_records), hashed like the
+staged record IDs when the project flags its record ID, so the load can remove
+them.
 """
 
 import re
@@ -23,7 +26,7 @@ from typing import Protocol
 
 import duckdb
 
-from janice_pipeline.privacy.hashing import protect_row
+from janice_pipeline.privacy.hashing import fields_to_protect, hash_identifier, protect_row
 from janice_pipeline.projects.registry import PROJECT_KEY_PATTERN
 from janice_pipeline.synthetic.dictionary import Field
 
@@ -43,6 +46,8 @@ class RecordSource(Protocol):
         self, record_ids: Sequence[str], *, batch_size: int
     ) -> Iterator[list[dict[str, str]]]: ...
 
+    def export_deleted_record_ids(self, since: datetime) -> list[str]: ...
+
 
 @dataclass(frozen=True)
 class StageResult:
@@ -52,6 +57,7 @@ class StageResult:
     rows: int  # rows written; more than records when instruments repeat
     columns: int
     mode: str = "full"  # "full" or "changes"
+    deleted: int = 0  # records deleted in REDCap since changed_since
 
 
 def stage_project(
@@ -87,8 +93,14 @@ def stage_project(
     record_id_field = fields[0].name
     if changed_since is None:
         record_ids = source.export_record_ids(record_id_field)
+        deleted_ids: list[str] = []  # a full load replaces the project anyway
     else:
         record_ids = source.export_record_ids(record_id_field, changed_since=changed_since)
+        deleted_ids = source.export_deleted_record_ids(changed_since)
+        # Match the staged record IDs, which are hashed if the project flags them
+        id_field = fields[0]
+        if id_field.name in fields_to_protect(fields, keep_in_clear):
+            deleted_ids = [hash_identifier(i, key, id_field) for i in deleted_ids]
 
     con = duckdb.connect(str(db_path))
     try:
@@ -108,6 +120,10 @@ def stage_project(
         if columns is None:
             columns = [record_id_field]
             _create_table(con, table, columns)
+        con.execute("DROP TABLE IF EXISTS _deleted_records")
+        con.execute("CREATE TABLE _deleted_records (record_id VARCHAR)")
+        if deleted_ids:
+            con.executemany("INSERT INTO _deleted_records VALUES (?)", [[i] for i in deleted_ids])
         con.execute("DROP TABLE IF EXISTS _stage_info")
         con.execute(
             "CREATE TABLE _stage_info AS SELECT ?::VARCHAR AS mode, "
@@ -128,6 +144,7 @@ def stage_project(
         rows=rows,
         columns=len(columns),
         mode=mode,
+        deleted=len(deleted_ids),
     )
 
 

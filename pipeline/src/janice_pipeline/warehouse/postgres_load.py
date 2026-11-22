@@ -10,10 +10,11 @@ A load replaces one project's rows inside one transaction, so readers see the
 old rows or the new ones, never a mix, and other projects are untouched. A
 staging file holding only changed records (mode "changes", see _stage_info)
 replaces just those records, every row of each, so a removed repeat instance
-disappears too. Each load stores the run's start time in <schema>.watermarks,
-so the next run asks REDCap only for what changed since. Each
-load is recorded in <schema>.loads, and each project's settings that dbt needs
-(which field in ``data`` holds its site) are kept in <schema>.projects.
+disappears too, and removes the records it lists as deleted in REDCap
+(_deleted_records). Each load stores the run's start time in
+<schema>.watermarks, so the next run asks REDCap only for what changed since.
+Each load is recorded in <schema>.loads, and each project's settings that dbt
+needs (which field in ``data`` holds its site) are kept in <schema>.projects.
 
 Values arrive already hashed (staging hashes before writing), and blank values
 are left out of ``data``: REDCap exports a blank for "not filled in", and
@@ -90,6 +91,7 @@ class LoadResult:
     records: int  # distinct record IDs
     rows: int  # rows loaded; more than records when instruments repeat
     mode: str = "full"  # "full" or "changes"
+    deleted: int = 0  # records removed because they were deleted in REDCap
 
 
 def load_project(
@@ -118,12 +120,19 @@ def load_project(
         columns = [row[0] for row in staging.execute(f"DESCRIBE {table}").fetchall()]
         record_id_column = columns[0]  # stage_project writes the record ID first
         mode, started_at = _stage_info(staging, tables)
+        deleted_ids = (
+            [row[0] for row in staging.execute("SELECT record_id FROM _deleted_records").fetchall()]
+            if "_deleted_records" in tables
+            else []
+        )
         staged_ids = [
             row[0]
             for row in staging.execute(
                 f'SELECT DISTINCT "{record_id_column}" FROM {table}'  # noqa: S608 (checked key)
             ).fetchall()
         ]
+        # Deleted in REDCap and not created again since: these leave for good
+        removed = sorted(set(deleted_ids) - set(staged_ids)) if mode == "changes" else []
         # Last query on this connection: a DuckDB connection holds one result
         # at a time, and the copy below streams from this one
         cursor = staging.execute(f"SELECT * FROM {table}")  # noqa: S608 (checked key)
@@ -138,11 +147,13 @@ def load_project(
                     (project_key,),
                 )
             else:
+                # Deleted records go; changed records go too and are copied back
+                # below, so a record deleted and created again keeps its new rows
                 pg.execute(
                     sql.SQL(
                         "DELETE FROM {}.redcap_records WHERE project = %s AND record_id = ANY(%s)"
                     ).format(sql.Identifier(schema)),
-                    (project_key, staged_ids),
+                    (project_key, deleted_ids + staged_ids),
                 )
             records: set[str] = set()
             rows = 0
@@ -163,9 +174,10 @@ def load_project(
                         rows += 1
             pg.execute(
                 sql.SQL(
-                    "INSERT INTO {}.loads (project, records, rows, mode) VALUES (%s, %s, %s, %s)"
+                    "INSERT INTO {}.loads (project, records, rows, mode, deleted) "
+                    "VALUES (%s, %s, %s, %s, %s)"
                 ).format(sql.Identifier(schema)),
-                (project_key, len(records), rows, mode),
+                (project_key, len(records), rows, mode, len(removed)),
             )
             if started_at is not None:
                 pg.execute(
@@ -185,7 +197,9 @@ def load_project(
                 (project_key, site_field),
             )
 
-    return LoadResult(project=project_key, records=len(records), rows=rows, mode=mode)
+    return LoadResult(
+        project=project_key, records=len(records), rows=rows, mode=mode, deleted=len(removed)
+    )
 
 
 def read_watermark(
@@ -265,6 +279,9 @@ def _ensure_tables(pg: psycopg.Connection, schema: str) -> None:
     # Added with incremental loading; ADD COLUMN IF NOT EXISTS upgrades
     # warehouses created before it
     pg.execute(sql.SQL("ALTER TABLE {}.loads ADD COLUMN IF NOT EXISTS mode text").format(name))
+    pg.execute(
+        sql.SQL("ALTER TABLE {}.loads ADD COLUMN IF NOT EXISTS deleted integer").format(name)
+    )
     pg.execute(
         sql.SQL(
             """
