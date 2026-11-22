@@ -126,7 +126,7 @@ The top row runs on a schedule and ends in the `qi` schema. The bottom row runs 
 | Layer | Original choice | Refined choice |
 | --- | --- | --- |
 | Extract | Python REDCap client (httpx) → DuckDB | Own tested Python client instead of redquack; full load once, then incremental by `dateRangeBegin`; identifiers hashed in DuckDB |
-| Load | Airbyte → Postgres | DuckDB `postgres` extension (Airbyte has no DuckDB source) |
+| Load | Airbyte → Postgres | psycopg `COPY` into one JSONB table for all projects (ADR 0012); Airbyte has no DuckDB source |
 | Transform | dbt | Keep, plus an indicator catalogue and `fct_indicator_monthly` |
 | API | Django REST Framework | Keep, versioned under `/api/v1/`, ASGI for streaming |
 | Access | (not specified) | Role-based access plus Postgres row-level security over a network-to-unit hierarchy |
@@ -137,7 +137,7 @@ The top row runs on a schedule and ends in the `qi` schema. The bottom row runs 
 
 ## Data ingestion
 
-JANICE loads the pooled CIN data once in full, then pulls only records created or changed since the last successful run, and hashes every flagged identifier before anything reaches Postgres. Airbyte is dropped: it supports DuckDB only as a destination, so DuckDB's own `postgres` extension does the load.
+JANICE loads the pooled CIN data once in full, then pulls only records created or changed since the last successful run, and hashes every flagged identifier before anything reaches Postgres. Airbyte is dropped: it supports DuckDB only as a destination. The load reads each project's staging file and streams it into Postgres with psycopg's COPY, rather than through DuckDB's `postgres` extension, which would have to be downloaded at run time (ADR 0012).
 
 ```mermaid
 flowchart LR
@@ -146,7 +146,7 @@ flowchart LR
   R["Pooled CIN REDCap<br/>records, metadata, audit log"] --> X["REDCap API client<br/>full once, then incremental"]
   X --> H["Hash in memory<br/>HMAC-SHA256, each batch"]
   H --> S["DuckDB staging<br/>hashed values only, rebuilt each run"]
-  S --> P["Postgres raw<br/>hashed values only"]
+  S --> P["Postgres raw.redcap_records<br/>hashed, one JSONB row per record"]
   P --> T["dbt models<br/>stg, int, marts"]
   T --> Q["qi indicators<br/>monthly numerators and denominators"]
   Q --> U["Query service<br/>to API and MCP"]
@@ -180,7 +180,7 @@ The watermark is the run's start time in the REDCap server's time zone, stored i
 2. **Hash.** In DuckDB, replace each identifier value with `HMAC-SHA256(key, normalised value)`. Normalise first (trim, lower-case, strip spaces from phone numbers) so the same person hashes the same way across admissions.
 3. **Keep the key out of the data.** The HMAC key lives in the secrets store, never in the database or the repository. A plain SHA-256 hash is not enough: names, phone numbers and inpatient numbers come from small sets of possible values and can be reversed by trying them all, which a secret key prevents.
 4. **Drop what has no analytic use.** Hashed free text is useless, so free-text identifier fields are dropped rather than hashed. Dates of birth become age at admission in `stg`.
-5. **Load.** Upsert into `raw`, keyed on project, record ID, repeating instrument and instance.
+5. **Load.** Replace the project's rows (full load) or upsert them (incremental) in `raw.redcap_records`: one row per record or repeat instance, with its fields in a JSONB column, keyed on project, record ID, event, repeating instrument and instance, in one transaction per project. Each load is recorded in `raw.loads`.
 
 If a field's identifier flag changes between runs, the run stops and alerts the data managers rather than loading a newly unflagged field in cleartext.
 
@@ -195,7 +195,7 @@ Use open-source Dagster, self-hosted, from the first sprint. It models the pipel
 | `redcap_metadata` | Each run | Python asset; exports and versions the data dictionary |
 | Identifier-flag check | Each run | Asset check; fails and blocks the run if identifier flags changed |
 | `redcap_extract` | Each run | The Python REDCap client (`janice_pipeline.redcap`), called directly from Dagster assets, so its logs and status show in Dagster |
-| `redcap_staging` and `raw_*` | Each run | Python asset, one partition per project: hash identifiers in memory, write staging\_\<project>.duckdb; then the load into Postgres |
+| `redcap_staging` and `raw.redcap_records` | Each run | Python asset, one partition per project: hash identifiers in memory, write staging\_\<project>.duckdb; then the load into Postgres |
 | dbt models | Each run | `dagster-dbt`: every dbt model becomes an asset, and dbt tests show as asset checks |
 | `qi` indicators | Each run | dbt assets; freshness check against the agreed threshold |
 
