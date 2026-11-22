@@ -1,0 +1,32 @@
+# Dagster instance settings for the containers (DAGSTER_HOME=/opt/dagster/home).
+# Docs: https://docs.dagster.io/deployment/oss/dagster-yaml
+#
+# Run history, schedules and sensor state live in their own Postgres database
+# (DAGSTER_POSTGRES_DB, default "dagster"), on the same server as the
+# warehouse, so they survive container restarts and are backed up with it.
+
+storage:
+  postgres:
+    postgres_db:
+      hostname:
+        env: POSTGRES_HOST
+      port:
+        env: POSTGRES_PORT
+      username:
+        env: POSTGRES_USER
+      password:
+        env: POSTGRES_PASSWORD
+      db_name:
+        env: DAGSTER_POSTGRES_DB
+
+# Runs wait in a queue; at most 4 at once (the nightly run starts one per
+# project, plus the indicator build)
+run_coordinator:
+  module: dagster.core.run_coordinator
+  class: QueuedRunCoordinator
+  config:
+    max_concurrent_runs: 4
+
+# Health data project: Dagster must not send usage statistics anywhere
+telemetry:
+  enabled: false

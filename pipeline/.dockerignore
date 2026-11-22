@@ -1,0 +1,12 @@
+# Keep the build context small and free of local state and secrets
+.venv/
+**/__pycache__/
+.pytest_cache/
+.ruff_cache/
+.tmp_dagster_home_*/
+dbt/target/
+dbt/logs/
+tests/
+*.duckdb
+.env
+.env.*

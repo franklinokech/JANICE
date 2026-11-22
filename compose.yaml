@@ -11,6 +11,16 @@ x-backend: &backend
     POSTGRES_HOST: db      # inside Docker, Postgres is reached by its service name
     POSTGRES_PORT: "5432"
 
+# Database settings shared by the three pipeline (Dagster) services. Only
+# these are passed, not the whole .env, so each container gets what it needs
+x-pipeline-env: &pipeline-env
+  POSTGRES_HOST: db
+  POSTGRES_PORT: "5432"
+  POSTGRES_DB: ${POSTGRES_DB:-janice}
+  POSTGRES_USER: ${POSTGRES_USER:-janice}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+  DAGSTER_POSTGRES_DB: ${DAGSTER_POSTGRES_DB:-dagster}
+
 services:
   db:
     image: postgres:18
@@ -22,6 +32,8 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql
+      # Creates the dagster database when the volume is first created
+      - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -55,5 +67,56 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Serves the pipeline code to the Dagster webserver and daemon. Runs execute
+  # here, so only this container holds the REDCap tokens and the hashing key
+  pipeline:
+    build: ./pipeline
+    image: janice-pipeline:dev
+    environment:
+      <<: *pipeline-env
+      JANICE_SOURCE: ${JANICE_SOURCE:-synthetic}
+      JANICE_SCHEDULES: ${JANICE_SCHEDULES:-}
+      JANICE_HASH_KEY: ${JANICE_HASH_KEY:?Set JANICE_HASH_KEY in .env}
+      REDCAP_API_URL: ${REDCAP_API_URL:-}
+      REDCAP_SERVER_TIMEZONE: ${REDCAP_SERVER_TIMEZONE:-UTC}
+      REDCAP_TOKEN_NEONATAL: ${REDCAP_TOKEN_NEONATAL:-}
+      REDCAP_TOKEN_PAEDIATRICS: ${REDCAP_TOKEN_PAEDIATRICS:-}
+      REDCAP_TOKEN_MATERNITY: ${REDCAP_TOKEN_MATERNITY:-}
+    volumes:
+      - pipeline-data:/data      # hashed staging files, synthetic data dictionaries
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "dagster", "api", "grpc-health-check", "--port", "4000"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  # The Dagster UI, on this machine only
+  dagster-webserver:
+    image: janice-pipeline:dev
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000",
+              "-w", "/opt/dagster/home/workspace.yaml"]
+    environment: *pipeline-env
+    ports:
+      - "127.0.0.1:${DAGSTER_PORT:-3000}:3000"
+    depends_on:
+      pipeline:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Runs the schedules, sensors and run queue
+  dagster-daemon:
+    image: janice-pipeline:dev
+    command: ["dagster-daemon", "run", "-w", "/opt/dagster/home/workspace.yaml"]
+    environment: *pipeline-env
+    depends_on:
+      pipeline:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  pipeline-data:
