@@ -9,7 +9,9 @@ Settings come from the environment (the git-ignored .env on a laptop):
   (default ~/janice-data, outside the repository).
 - JANICE_PROJECTS_FILE: the project registry (default projects/projects.yaml).
 - REDCAP_API_URL: default API URL for projects that do not set their own.
-Secrets (each project's token, JANICE_HASH_KEY) are read only when a run starts.
+- POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB, POSTGRES_USER: the warehouse.
+Secrets (each project's token, JANICE_HASH_KEY, POSTGRES_PASSWORD) are read
+only when a run starts.
 """
 
 import os
@@ -27,6 +29,11 @@ from janice_pipeline.orchestration.staging import (
     build_staging_asset,
 )
 from janice_pipeline.orchestration.synthetic import synthetic_redcap_export
+from janice_pipeline.orchestration.warehouse import (
+    WarehouseResource,
+    build_ingest_job,
+    build_warehouse_asset,
+)
 from janice_pipeline.projects.registry import REGISTRY_ENV, load_projects
 
 
@@ -47,10 +54,16 @@ def data_dir(env: Mapping[str, str]) -> Path:
 def build_defs(env: Mapping[str, str]) -> dg.Definitions:
     projects = load_projects(env.get(REGISTRY_ENV) or None)
     return dg.Definitions(
-        assets=[synthetic_redcap_export, build_staging_asset(projects)],
+        assets=[
+            synthetic_redcap_export,
+            build_staging_asset(projects),
+            build_warehouse_asset(projects),
+        ],
+        jobs=[build_ingest_job()],
         resources={
             "source": source_from_env(env),
             "staging": StagingResource(data_dir=str(data_dir(env))),
+            "warehouse": WarehouseResource(),
         },
     )
 

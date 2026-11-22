@@ -87,3 +87,10 @@ def test_partitions_come_from_the_project_registry(tmp_path):
 
     asset = defs_for_test.resolve_assets_def("redcap_staging")
     assert asset.partitions_def.get_partition_keys() == ["neonatal", "kilifi_nbu"]
+
+
+def test_warehouse_asset_and_ingest_job_are_registered():
+    asset_keys = {key.to_user_string() for key in defs.resolve_all_asset_keys()}
+
+    assert "warehouse_raw" in asset_keys
+    assert defs.resolve_job_def("ingest_project") is not None

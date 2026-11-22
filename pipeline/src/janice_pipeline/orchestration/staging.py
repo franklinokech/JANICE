@@ -118,13 +118,18 @@ class StagingResource(dg.ConfigurableResource):
         return key
 
 
+def project_partitions(projects: list[Project]) -> dg.StaticPartitionsDefinition:
+    """One partition per project, in registry order. Shared by every per-project asset."""
+    return dg.StaticPartitionsDefinition([project.key for project in projects])
+
+
 def build_staging_asset(projects: list[Project]) -> dg.AssetsDefinition:
     """The staging asset, with one partition per project."""
     by_key = {project.key: project for project in projects}
 
     @dg.asset(
         name="redcap_staging",
-        partitions_def=dg.StaticPartitionsDefinition(list(by_key)),
+        partitions_def=project_partitions(projects),
         group_name="ingestion",
         description="One REDCap project staged in DuckDB as raw_<project>. Flagged "
         "identifiers are hashed (or dropped, for free text and checkboxes) before anything "
