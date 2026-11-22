@@ -7,16 +7,46 @@ models:
     config:
       meta:
         indicator_id: neo_hypothermia_admission
+        name: Hypothermia on admission
+        version: "1.0"
+        status: draft
         unit: neonatal
         type: process_and_outcome
         desired_direction: lower
-        numerator: hypothermic
-        denominator: assessed
+        definition: >
+          The share of neonates whose temperature on admission was below 36.5 °C,
+          among those with a plausible admission temperature recorded.
+        numerator:
+          column: hypothermic
+          description: Neonates with an admission temperature below 36.5 °C.
+        denominator:
+          column: assessed
+          description: Neonates with a plausible admission temperature recorded (25 to 43 °C).
+        exclusions:
+          - Temperatures outside 25 to 43 °C, which are almost certainly typing errors (4.2 for 34.2). They are counted in implausible_temp and listed for the data managers to correct.
+          - Admissions without a usable admission date.
+        completeness: >
+          The share of admissions with any admission temperature recorded
+          (temp_recorded / admissions).
+        breakdowns:
+          - "WHO grade: mild 36.0 to 36.4 °C, moderate 32.0 to 35.9 °C, severe below 32.0 °C."
+        fields: [temperature_degrees_celciu, date_adm, hosp_id]
+        rationale: >
+          Hypothermia on admission is common, preventable and strongly linked to
+          neonatal death. It reflects the warm chain from birth through
+          transport to the newborn unit.
+        references:
+          - title: "WHO. Thermal protection of the newborn: a practical guide (1997)"
+            url: "https://www.who.int/publications-detail-redirect/WHO_RHT_MSM_97.2"
     columns:
       - name: site_id
         data_tests: [not_null]
       - name: admission_month
         data_tests: [not_null]
+      - name: hypothermic
+        description: Numerator.
+      - name: assessed
+        description: Denominator.
       - name: hypothermia_rate
         description: hypothermic / assessed, to 4 decimal places; NULL when none assessed.
         data_tests:

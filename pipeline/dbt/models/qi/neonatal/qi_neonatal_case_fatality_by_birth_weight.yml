@@ -7,16 +7,46 @@ models:
     config:
       meta:
         indicator_id: neo_cfr_birth_weight
+        name: Neonatal case fatality by birth-weight band
+        version: "1.0"
+        status: draft
         unit: neonatal
         type: outcome
         desired_direction: lower
-        numerator: deaths
-        denominator: known_outcome
+        definition: >
+          The share of neonates who died before discharge, among those whose
+          outcome is known, reported separately for each birth-weight band.
+        numerator:
+          column: deaths
+          description: Neonates who died before discharge (outcome "Dead").
+        denominator:
+          column: known_outcome
+          description: Neonates discharged alive or who died (outcome "Alive" or "Dead").
+        exclusions:
+          - Referred, absconded and discharged against medical advice, because their fate is unknown. They are counted in unknown_outcome and reported next to the rate.
+          - Admissions without a usable admission date, which cannot be placed in a month.
+        completeness: >
+          The share of admissions with a usable birth weight: all bands except
+          not_recorded. The share with an unknown outcome is also reported.
+        breakdowns:
+          - "Birth-weight band: under 1000 g, 1000 to 1499 g, 1500 to 2499 g, 2500 g and over, and not recorded. A band edge belongs to the higher band (1000 g is in 1000 to 1499 g)."
+        fields: [outcome, birth_wt, birth_wt_units, date_adm, hosp_id]
+        rationale: >
+          The headline outcome for neonatal units. Birth weight is the strongest
+          predictor of neonatal death, so banding makes hospitals that admit
+          more very small babies comparable with those that admit fewer.
+        references:
+          - title: "Indicators of adherence to guidelines in Kenyan hospitals (CIN, BMJ Global Health)"
+            url: "https://gh.bmj.com/content/2/4/e000468.abstract"
     columns:
       - name: site_id
         data_tests: [not_null]
       - name: admission_month
         data_tests: [not_null]
+      - name: deaths
+        description: Numerator.
+      - name: known_outcome
+        description: Denominator.
       - name: birth_weight_band
         data_tests:
           - accepted_values:
