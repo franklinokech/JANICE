@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 import dagster as dg
 
 from janice_pipeline.orchestration.schedules import (
+    FULL_REFRESH_TAG,
     NIGHTLY_TAG,
     build_indicators_sensor,
     build_nightly_schedule,
@@ -33,6 +34,26 @@ def test_the_nightly_schedule_starts_one_run_per_project():
     assert all(r.tags[NIGHTLY_TAG] == "2026-11-23" for r in requests)
     # One run per project per night, even if the scheduler ticks twice
     assert requests[0].run_key == "2026-11-23-neonatal"
+
+
+def test_weekday_nights_are_incremental():
+    schedule = build_nightly_schedule(PROJECTS, running=False)
+
+    requests = list(schedule(dg.build_schedule_context(scheduled_execution_time=NIGHT)))
+
+    assert all(not r.run_config for r in requests)
+
+
+def test_sunday_night_is_a_full_refresh():
+    # Weekly full reload: also removes records deleted in REDCap, which never
+    # show up as "changed"
+    sunday = datetime(2026, 11, 29, 2, 0, tzinfo=NAIROBI)
+    schedule = build_nightly_schedule(PROJECTS, running=False)
+
+    requests = list(schedule(dg.build_schedule_context(scheduled_execution_time=sunday)))
+
+    assert all(r.run_config["ops"]["redcap_staging"]["config"]["full_refresh"] for r in requests)
+    assert requests[0].tags[FULL_REFRESH_TAG] == "true"
 
 
 def test_the_schedule_runs_at_two_in_the_morning_nairobi_time():
