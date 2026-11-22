@@ -1,9 +1,10 @@
-"""Dagster asset that stages each REDCap unit into DuckDB, identifiers hashed.
+"""Dagster asset that stages each registered REDCap project into DuckDB.
 
-One asset, ``redcap_staging``, with one partition per unit (neonatal,
-paediatrics, maternity), so each unit can be run, retried and watched on its own.
+One asset, ``redcap_staging``, with one partition per project in the registry
+(projects/projects.yaml), so each project can be run, retried and watched on
+its own. Adding a project to the registry adds a partition: no code changes.
 
-Secrets never enter Dagster's config, where the UI would show them: the REDCap
+Secrets never enter Dagster's config, where the UI would show them: REDCap
 tokens and the hashing key are read from the environment when the run starts.
 
 Where records come from is a resource:
@@ -18,52 +19,55 @@ from pathlib import Path
 import dagster as dg
 
 from janice_pipeline.privacy.hashing import MIN_KEY_BYTES
-from janice_pipeline.redcap.client import DEFAULT_SERVER_TIMEZONE, RedcapClient
-from janice_pipeline.staging.duckdb_stage import (
-    DEFAULT_BATCH_SIZE,
-    UNITS,
-    RecordSource,
-    stage_unit,
-)
+from janice_pipeline.projects.registry import Project
+from janice_pipeline.redcap.client import RedcapClient
+from janice_pipeline.staging.duckdb_stage import DEFAULT_BATCH_SIZE, RecordSource, stage_project
 from janice_pipeline.synthetic.dictionary import read_data_dictionary
 from janice_pipeline.synthetic.records import generate_records
 
 HASH_KEY_ENV = "JANICE_HASH_KEY"
-UNIT_PARTITIONS = dg.StaticPartitionsDefinition(sorted(UNITS))
+API_URL_ENV = "REDCAP_API_URL"
 
 
 class RecordSourceResource(dg.ConfigurableResource):
-    """Where a unit's records come from."""
+    """Where a project's records come from."""
 
-    def for_unit(self, unit: str) -> RecordSource:
+    def for_project(self, project: Project) -> RecordSource:
         raise NotImplementedError
 
 
 class RedcapSourceResource(RecordSourceResource):
-    """The real REDCap API. Tokens come from REDCAP_TOKEN_<UNIT> at run time."""
+    """The real REDCap API. Each project's token comes from its env variable at run time."""
 
-    api_url: str
-    server_timezone: str = DEFAULT_SERVER_TIMEZONE
+    default_api_url: str = ""
 
-    def for_unit(self, unit: str) -> RecordSource:
-        variable = f"REDCAP_TOKEN_{unit.upper()}"
-        token = os.environ.get(variable, "")
+    def for_project(self, project: Project) -> RecordSource:
+        url = project.api_url or self.default_api_url
+        if not url:
+            raise dg.Failure(
+                f"No REDCap API URL for {project.key}: set api_url in the registry "
+                f"or {API_URL_ENV} in the environment"
+            )
+        token = os.environ.get(project.token_variable, "")
         if not token:
-            raise dg.Failure(f"No REDCap token for {unit}: set {variable} in the environment")
-        return RedcapClient(self.api_url, token, server_timezone=self.server_timezone)
+            raise dg.Failure(
+                f"No REDCap token for {project.key}: set {project.token_variable} "
+                "in the environment"
+            )
+        return RedcapClient(url, token, server_timezone=project.server_timezone)
 
 
 class SyntheticSourceResource(RecordSourceResource):
-    """Synthetic records from <dictionary_dir>/<unit>_dictionary.csv. No real data."""
+    """Synthetic records from <dictionary_dir>/<project dictionary>. No real data."""
 
     dictionary_dir: str
     records: int = 1000
     seed: int = 42
 
-    def for_unit(self, unit: str) -> RecordSource:
-        path = Path(self.dictionary_dir) / f"{unit}_dictionary.csv"
+    def for_project(self, project: Project) -> RecordSource:
+        path = Path(self.dictionary_dir) / project.dictionary_filename
         if not path.exists():
-            raise dg.Failure(f"No data dictionary for {unit}: expected {path}")
+            raise dg.Failure(f"No data dictionary for {project.key}: expected {path}")
         fields = read_data_dictionary(path)
         _, rows = generate_records(fields, count=self.records, seed=self.seed)
         return _InMemorySource(fields, rows)
@@ -87,16 +91,15 @@ class _InMemorySource:
 
 
 class StagingResource(dg.ConfigurableResource):
-    """Where staged tables are written, and how identifiers are protected."""
+    """Where staged tables are written, and the key that protects identifiers."""
 
     data_dir: str
-    keep_in_clear: list[str] = ["hosp_id"]
     batch_size: int = DEFAULT_BATCH_SIZE
 
-    def db_path(self, unit: str) -> Path:
-        """One DuckDB file per unit: DuckDB allows one writer per file, so units
-        staged at the same time must never share one."""
-        return Path(self.data_dir) / f"staging_{unit}.duckdb"
+    def db_path(self, project_key: str) -> Path:
+        """One DuckDB file per project: DuckDB allows one writer per file, so
+        projects staged at the same time must never share one."""
+        return Path(self.data_dir) / f"staging_{project_key}.duckdb"
 
     def hash_key(self) -> bytes:
         """The HMAC key from JANICE_HASH_KEY (64 hex characters), read at run time."""
@@ -115,37 +118,47 @@ class StagingResource(dg.ConfigurableResource):
         return key
 
 
-@dg.asset(
-    partitions_def=UNIT_PARTITIONS,
-    group_name="ingestion",
-    description="One REDCap unit staged in DuckDB as raw_<unit>. Flagged identifiers are "
-    "hashed (or dropped, for free text and checkboxes) before anything is written.",
-    kinds={"python", "duckdb"},
-)
-def redcap_staging(
-    context: dg.AssetExecutionContext,
-    source: RecordSourceResource,
-    staging: StagingResource,
-) -> dg.MaterializeResult:
-    unit = context.partition_key
-    db_path = staging.db_path(unit)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+def build_staging_asset(projects: list[Project]) -> dg.AssetsDefinition:
+    """The staging asset, with one partition per project."""
+    by_key = {project.key: project for project in projects}
 
-    result = stage_unit(
-        source.for_unit(unit),
-        unit=unit,
-        db_path=db_path,
-        key=staging.hash_key(),
-        keep_in_clear=set(staging.keep_in_clear),
-        batch_size=staging.batch_size,
+    @dg.asset(
+        name="redcap_staging",
+        partitions_def=dg.StaticPartitionsDefinition(list(by_key)),
+        group_name="ingestion",
+        description="One REDCap project staged in DuckDB as raw_<project>. Flagged "
+        "identifiers are hashed (or dropped, for free text and checkboxes) before anything "
+        "is written; each project's site field stays readable.",
+        kinds={"python", "duckdb"},
     )
-    context.log.info(f"Staged {result.records} {unit} records into {result.table}")
-    return dg.MaterializeResult(
-        metadata={
-            "table": result.table,
-            "records": result.records,
-            "rows": result.rows,
-            "columns": result.columns,
-            "path": dg.MetadataValue.path(str(db_path)),
-        }
-    )
+    def redcap_staging(
+        context: dg.AssetExecutionContext,
+        source: RecordSourceResource,
+        staging: StagingResource,
+    ) -> dg.MaterializeResult:
+        project = by_key[context.partition_key]
+        db_path = staging.db_path(project.key)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        result = stage_project(
+            source.for_project(project),
+            project_key=project.key,
+            db_path=db_path,
+            key=staging.hash_key(),
+            keep_in_clear=project.clear_fields,
+            required_fields={project.site_field},
+            batch_size=staging.batch_size,
+        )
+        context.log.info(f"Staged {result.records} {project.key} records into {result.table}")
+        return dg.MaterializeResult(
+            metadata={
+                "table": result.table,
+                "records": result.records,
+                "rows": result.rows,
+                "columns": result.columns,
+                "site_field": project.site_field,
+                "path": dg.MetadataValue.path(str(db_path)),
+            }
+        )
+
+    return redcap_staging
