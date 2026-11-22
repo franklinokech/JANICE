@@ -1,0 +1,90 @@
+models:
+  - name: qi_neonatal_spo2_measured_on_admission
+    description: >
+      Pilot indicator 5. Full-form neonatal admissions with oxygen saturation
+      measured at admission, per site and admission month. Higher is better.
+    config:
+      meta:
+        indicator_id: neo_spo2_measured_admission
+        name: Oxygen saturation measured at admission
+        version: "1.0"
+        status: draft
+        unit: neonatal
+        type: process
+        desired_direction: higher
+        definition: >
+          The share of neonatal admissions, on the full form, whose oxygen
+          saturation was recorded as measured at admission (pulse oximetry).
+        numerator:
+          column: spo2_measured
+          description: Eligible admissions with oxygen saturation recorded as measured.
+        denominator:
+          column: eligible
+          description: Full-form admissions (is_minimum = 0), on which the question is asked.
+        exclusions:
+          - Minimum records, on which the CIN form does not ask the question. They are counted in minimum_form.
+          - Records whose form type is not recorded. They are counted in form_type_not_recorded.
+          - Admissions without a usable admission date.
+        completeness: >
+          The share of eligible admissions with the question answered, yes or
+          no (spo2_recorded / eligible). Not documented counts as not measured.
+        fields: [oxygen_saturation_measured, is_minimum, date_adm, hosp_id]
+        rationale: >
+          Hypoxaemia is common in sick newborns and often missed on clinical
+          signs alone. WHO recommends pulse oximetry to detect hypoxaemia and
+          to guide oxygen therapy, so measuring saturation on admission is the
+          first step to giving oxygen, and CPAP, to the babies who need it.
+        references:
+          - title: "WHO. Oxygen therapy for children: a manual for health workers (2016)"
+            url: "https://who.int/publications-detail-redirect/9789241549554"
+    columns:
+      - name: site_id
+        data_tests: [not_null]
+      - name: admission_month
+        data_tests: [not_null]
+      - name: spo2_measured
+        description: Numerator.
+      - name: eligible
+        description: Denominator.
+      - name: spo2_measured_rate
+        description: spo2_measured / eligible, to 4 decimal places; NULL when no admission was eligible.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+      - name: documentation_completeness
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+
+unit_tests:
+  - name: only_full_form_admissions_are_eligible
+    description: >
+      Minimum records are never asked the question, so they leave the
+      denominator; an unanswered question on a full form counts as not measured.
+    model: qi_neonatal_spo2_measured_on_admission
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: true, spo2_measured: true}
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: true, spo2_measured: false}
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: true, spo2_measured: null}
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: true, spo2_measured: true}
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: false, spo2_measured: null}
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: null, spo2_measured: true}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, admissions: 6, minimum_form: 1,
+           form_type_not_recorded: 1, eligible: 4, spo2_recorded: 3, spo2_measured: 2,
+           spo2_measured_rate: "0.5000", documentation_completeness: "0.7500"}
+
+  - name: a_month_of_minimum_records_has_no_rate
+    model: qi_neonatal_spo2_measured_on_admission
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, is_full_form: false, spo2_measured: null}
+          - {site_id: "41", admission_month: 2026-03-01, is_full_form: true, spo2_measured: true}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, eligible: 0, spo2_measured_rate: null, documentation_completeness: null}
+        - {site_id: "41", admission_month: 2026-03-01, eligible: 1, spo2_measured_rate: "1.0000", documentation_completeness: "1.0000"}
