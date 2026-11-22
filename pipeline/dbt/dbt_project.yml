@@ -27,3 +27,8 @@ models:
     staging:
       +schema: stg
       +materialized: view
+    qi:
+      # Indicator tables: monthly numerators and denominators per site, read
+      # by the query service. Tables, so dashboards never re-run the logic.
+      +schema: qi
+      +materialized: table

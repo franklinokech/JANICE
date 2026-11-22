@@ -1,0 +1,77 @@
+models:
+  - name: qi_neonatal_case_fatality_by_birth_weight
+    description: >
+      Pilot indicator 1. Deaths among neonates whose outcome is known (alive or
+      dead at discharge), per site, admission month and birth-weight band.
+      Lower is better.
+    config:
+      meta:
+        indicator_id: neo_cfr_birth_weight
+        unit: neonatal
+        type: outcome
+        desired_direction: lower
+        numerator: deaths
+        denominator: known_outcome
+    columns:
+      - name: site_id
+        data_tests: [not_null]
+      - name: admission_month
+        data_tests: [not_null]
+      - name: birth_weight_band
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [under_1000g, 1000_1499g, 1500_2499g, 2500g_plus, not_recorded]
+      - name: case_fatality_rate
+        description: deaths / known_outcome, to 4 decimal places; NULL when no outcome is known.
+        data_tests:
+          - value_in_range:
+              arguments: {min_value: 0, max_value: 1}
+
+unit_tests:
+  - name: deaths_over_known_outcomes_per_band
+    description: >
+      Referred babies count as admissions but not in the denominator; band
+      edges fall in the higher band (1000 g is 1000 to 1499).
+    model: qi_neonatal_case_fatality_by_birth_weight
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          # 1500 to 2499 g at site 40, March: 2 alive, 1 dead, 1 referred
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 1500, outcome_known: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 2499, outcome_known: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 2000, outcome_known: true, died: true}
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 1800, outcome_known: false, died: false}
+          # Band edges
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 999, outcome_known: true, died: true}
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 1000, outcome_known: true, died: false}
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 2500, outcome_known: true, died: false}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, birth_weight_band: 1500_2499g, admissions: 4, known_outcome: 3, deaths: 1, unknown_outcome: 1, case_fatality_rate: "0.3333"}
+        - {site_id: "40", admission_month: 2026-03-01, birth_weight_band: under_1000g, admissions: 1, known_outcome: 1, deaths: 1, unknown_outcome: 0, case_fatality_rate: "1.0000"}
+        - {site_id: "40", admission_month: 2026-03-01, birth_weight_band: 1000_1499g, admissions: 1, known_outcome: 1, deaths: 0, unknown_outcome: 0, case_fatality_rate: "0.0000"}
+        - {site_id: "40", admission_month: 2026-03-01, birth_weight_band: 2500g_plus, admissions: 1, known_outcome: 1, deaths: 0, unknown_outcome: 0, case_fatality_rate: "0.0000"}
+
+  - name: sites_months_and_missing_data_are_kept_apart
+    description: >
+      Each site and month is its own row; a missing weight goes to
+      not_recorded; a band with no known outcome has no rate; an admission
+      without a date is left out.
+    model: qi_neonatal_case_fatality_by_birth_weight
+    given:
+      - input: ref('stg_neonatal__admissions')
+        rows:
+          - {site_id: "40", admission_month: 2026-03-01, birth_weight_g: 3000, outcome_known: true, died: true}
+          - {site_id: "41", admission_month: 2026-03-01, birth_weight_g: 3000, outcome_known: true, died: false}
+          - {site_id: "40", admission_month: 2026-04-01, birth_weight_g: 3000, outcome_known: true, died: false}
+          - {site_id: "40", admission_month: 2026-04-01, birth_weight_g: null, outcome_known: true, died: true}
+          - {site_id: "40", admission_month: 2026-04-01, birth_weight_g: 800, outcome_known: false, died: false}
+          - {site_id: "40", admission_month: null, birth_weight_g: 3000, outcome_known: true, died: true}
+    expect:
+      rows:
+        - {site_id: "40", admission_month: 2026-03-01, birth_weight_band: 2500g_plus, deaths: 1, known_outcome: 1, case_fatality_rate: "1.0000"}
+        - {site_id: "41", admission_month: 2026-03-01, birth_weight_band: 2500g_plus, deaths: 0, known_outcome: 1, case_fatality_rate: "0.0000"}
+        - {site_id: "40", admission_month: 2026-04-01, birth_weight_band: 2500g_plus, deaths: 0, known_outcome: 1, case_fatality_rate: "0.0000"}
+        - {site_id: "40", admission_month: 2026-04-01, birth_weight_band: not_recorded, deaths: 1, known_outcome: 1, case_fatality_rate: "1.0000"}
+        - {site_id: "40", admission_month: 2026-04-01, birth_weight_band: under_1000g, deaths: 0, known_outcome: 0, case_fatality_rate: null}
