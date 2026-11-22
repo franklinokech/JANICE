@@ -9,31 +9,16 @@ The database password is read from the environment when the run starts, never
 from Dagster's config.
 """
 
-import os
-
 import dagster as dg
 
+from janice_pipeline.orchestration.resources import WarehouseResource
 from janice_pipeline.orchestration.staging import StagingResource, project_partitions
 from janice_pipeline.projects.registry import Project
-from janice_pipeline.warehouse.postgres_load import (
-    DEFAULT_SCHEMA,
-    PostgresSettings,
-    load_project,
-)
+from janice_pipeline.warehouse.postgres_load import load_project
+
+__all__ = ["WarehouseResource", "build_ingest_job", "build_warehouse_asset"]
 
 STAGING_ASSET = dg.AssetKey("redcap_staging")
-
-
-class WarehouseResource(dg.ConfigurableResource):
-    """The Postgres warehouse. Connection settings come from POSTGRES_* at run time."""
-
-    schema_name: str = DEFAULT_SCHEMA
-
-    def settings(self) -> PostgresSettings:
-        try:
-            return PostgresSettings.from_env(os.environ)
-        except ValueError as error:
-            raise dg.Failure(f"Cannot connect to the warehouse: {error}") from None
 
 
 def build_warehouse_asset(projects: list[Project]) -> dg.AssetsDefinition:

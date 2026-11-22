@@ -7,6 +7,11 @@ its own. Adding a project to the registry adds a partition: no code changes.
 Secrets never enter Dagster's config, where the UI would show them: REDCap
 tokens and the hashing key are read from the environment when the run starts.
 
+Runs are incremental: the asset asks REDCap only for records changed since the
+project's last successful load (its watermark in the warehouse) minus a
+one-hour overlap. The first run for a project, or a run with full_refresh,
+stages every record.
+
 Where records come from is a resource:
 - RedcapSourceResource: the real REDCap API (staging and production servers).
 - SyntheticSourceResource: synthetic records built from a data dictionary
@@ -14,10 +19,12 @@ Where records come from is a resource:
 """
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dagster as dg
 
+from janice_pipeline.orchestration.resources import WarehouseResource
 from janice_pipeline.privacy.hashing import MIN_KEY_BYTES
 from janice_pipeline.projects.registry import Project
 from janice_pipeline.redcap.client import RedcapClient
@@ -26,6 +33,9 @@ from janice_pipeline.synthetic.dictionary import read_data_dictionary
 from janice_pipeline.synthetic.records import generate_records
 
 HASH_KEY_ENV = "JANICE_HASH_KEY"
+# Re-read records whose change landed just before the last run started; loads
+# replace by record, so a record staged twice is harmless
+OVERLAP = timedelta(hours=1)
 API_URL_ENV = "REDCAP_API_URL"
 
 
@@ -80,7 +90,8 @@ class _InMemorySource:
     def export_metadata(self):
         return self._fields
 
-    def export_record_ids(self, record_id_field):
+    def export_record_ids(self, record_id_field, changed_since=None):
+        # Synthetic records have no change history: every run returns them all
         return [row[record_id_field] for row in self._rows]
 
     def export_records(self, record_ids, *, batch_size):
@@ -118,6 +129,12 @@ class StagingResource(dg.ConfigurableResource):
         return key
 
 
+class StagingConfig(dg.Config):
+    """Chosen per run, in the launchpad or by the schedule."""
+
+    full_refresh: bool = False
+
+
 def project_partitions(projects: list[Project]) -> dg.StaticPartitionsDefinition:
     """One partition per project, in registry order. Shared by every per-project asset."""
     return dg.StaticPartitionsDefinition([project.key for project in projects])
@@ -138,12 +155,22 @@ def build_staging_asset(projects: list[Project]) -> dg.AssetsDefinition:
     )
     def redcap_staging(
         context: dg.AssetExecutionContext,
+        config: StagingConfig,
         source: RecordSourceResource,
         staging: StagingResource,
+        warehouse: WarehouseResource,
     ) -> dg.MaterializeResult:
         project = by_key[context.partition_key]
         db_path = staging.db_path(project.key)
         db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        watermark = None if config.full_refresh else warehouse.watermark(project.key)
+        changed_since = watermark - OVERLAP if watermark else None
+        context.log.info(
+            f"Staging every {project.key} record"
+            if changed_since is None
+            else f"Staging {project.key} records changed since {changed_since.isoformat()}"
+        )
 
         result = stage_project(
             source.for_project(project),
@@ -153,10 +180,13 @@ def build_staging_asset(projects: list[Project]) -> dg.AssetsDefinition:
             keep_in_clear=project.clear_fields,
             required_fields={project.site_field},
             batch_size=staging.batch_size,
+            changed_since=changed_since,
         )
         context.log.info(f"Staged {result.records} {project.key} records into {result.table}")
         return dg.MaterializeResult(
             metadata={
+                "mode": result.mode,
+                "changed_since": changed_since.isoformat() if changed_since else "",
                 "table": result.table,
                 "records": result.records,
                 "rows": result.rows,

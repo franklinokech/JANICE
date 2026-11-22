@@ -170,7 +170,7 @@ flowchart LR
 | Incremental | Nightly (e.g. 02:00 EAT) | Records created or modified since the last watermark | `datetime_range_begin` (passed to REDCap's `dateRangeBegin`) set to the last successful run's start minus a 1-hour overlap |
 | Deletion sweep | With every incremental | Records deleted since the watermark | `record_delete` events from the REDCap audit log, exported with the same client; matching rows are tombstoned |
 | Reconciliation | Weekly | The full list of record IDs only | Compare with `raw`; anything missing is flagged and tombstoned |
-| Full refresh | On demand, or when the data dictionary changes a field an indicator uses | Everything | Same as the initial load, into a new schema, then swapped in |
+| Full refresh | Every Sunday night (02:00 EAT), on demand (full\_refresh in the Dagster launchpad), or when the data dictionary changes a field an indicator uses. Until the deletion sweep exists, the Sunday refresh is also how records deleted in REDCap leave the warehouse | Everything | Same as the initial load, into a new schema, then swapped in |
 
 The watermark is the run's start time in the REDCap server's time zone, stored in `ingest_runs` only after the load and `dbt build` both succeed, so a failed night is retried from the same point. The 1-hour overlap means some records arrive twice; the load is an upsert, so that is harmless.
 

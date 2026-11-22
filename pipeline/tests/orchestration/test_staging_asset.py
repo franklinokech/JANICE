@@ -7,14 +7,18 @@ as it will in production, set here with monkeypatch.
 
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 
 import dagster as dg
 import duckdb
 import pytest
 
+from janice_pipeline.orchestration.resources import WarehouseResource
 from janice_pipeline.orchestration.staging import (
+    OVERLAP,
     RecordSourceResource,
     RedcapSourceResource,
+    StagingConfig,
     StagingResource,
     SyntheticSourceResource,
     build_staging_asset,
@@ -57,12 +61,17 @@ class FakeSource:
     def export_metadata(self):
         return FIELDS
 
-    def export_record_ids(self, record_id_field):
+    def export_record_ids(self, record_id_field, changed_since=None):
+        ASKED_SINCE.append(changed_since)
         return [row[record_id_field] for row in self.rows]
 
     def export_records(self, record_ids, *, batch_size):
         for start in range(0, len(self.rows), batch_size):
             yield self.rows[start : start + batch_size]
+
+
+# What each run asked REDCap for: None (everything) or a time
+ASKED_SINCE: list = []
 
 
 class FakeSourceResource(RecordSourceResource):
@@ -72,14 +81,26 @@ class FakeSourceResource(RecordSourceResource):
         return FakeSource(self.count)
 
 
-def materialize(tmp_path, project="neonatal", projects=PROJECTS):
+class FakeWarehouse(WarehouseResource):
+    """A warehouse whose last load started at last_load (ISO time), or never."""
+
+    last_load: str = ""
+
+    def watermark(self, project_key):
+        return datetime.fromisoformat(self.last_load) if self.last_load else None
+
+
+def materialize(tmp_path, project="neonatal", projects=PROJECTS, last_load="", full_refresh=False):
+    ASKED_SINCE.clear()
     return dg.materialize(
         [build_staging_asset(projects)],
         partition_key=project,
         resources={
             "source": FakeSourceResource(),
             "staging": StagingResource(data_dir=str(tmp_path)),
+            "warehouse": FakeWarehouse(last_load=last_load),
         },
+        run_config=dg.RunConfig({"redcap_staging": StagingConfig(full_refresh=full_refresh)}),
         raise_on_error=False,
     )
 
@@ -241,3 +262,38 @@ def test_synthetic_source_says_which_dictionary_is_missing(tmp_path):
 
     with pytest.raises(dg.Failure, match="kilifi_nbu_dictionary.csv"):
         source.for_project(PROJECTS[1])
+
+
+# --- Incremental runs --------------------------------------------------------
+
+
+def test_the_first_run_for_a_project_loads_everything(tmp_path, monkeypatch):
+    monkeypatch.setenv("JANICE_HASH_KEY", FAKE_KEY_HEX)
+
+    result = materialize(tmp_path, last_load="")
+
+    assert ASKED_SINCE == [None]
+    (m,) = result.asset_materializations_for_node("redcap_staging")
+    assert m.metadata["mode"].value == "full"
+
+
+def test_later_runs_ask_only_for_changes_since_the_last_load_with_an_overlap(tmp_path, monkeypatch):
+    # The overlap catches records whose change landed just before the last
+    # run started; loading them twice is harmless (loads replace by record)
+    monkeypatch.setenv("JANICE_HASH_KEY", FAKE_KEY_HEX)
+    last_load = datetime(2026, 11, 22, 23, 0, tzinfo=UTC)
+
+    result = materialize(tmp_path, last_load=last_load.isoformat())
+
+    assert OVERLAP == timedelta(hours=1)
+    assert ASKED_SINCE == [last_load - OVERLAP]
+    (m,) = result.asset_materializations_for_node("redcap_staging")
+    assert m.metadata["mode"].value == "changes"
+
+
+def test_a_full_refresh_reloads_everything_whatever_the_watermark(tmp_path, monkeypatch):
+    monkeypatch.setenv("JANICE_HASH_KEY", FAKE_KEY_HEX)
+
+    materialize(tmp_path, last_load="2026-11-22T23:00:00+00:00", full_refresh=True)
+
+    assert ASKED_SINCE == [None]

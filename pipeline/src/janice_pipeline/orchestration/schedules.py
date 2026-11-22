@@ -2,7 +2,9 @@
 
 At 02:00 Nairobi time the schedule starts ingest_project once per registered
 project (REDCap -> hashed staging -> Postgres). Sites sync to the pooled
-REDCap during the day, so by then the day's records are in.
+REDCap during the day, so by then the day's records are in. Weeknights are
+incremental; Sunday night is a full refresh, which also removes records
+deleted in REDCap (they never show up as "changed").
 
 A sensor then waits until every project's run for that night has finished,
 and starts build_warehouse_models once, so the indicators are rebuilt from
@@ -22,6 +24,8 @@ import dagster as dg
 from janice_pipeline.projects.registry import Project
 
 NIGHTLY_TAG = "janice/nightly"
+FULL_REFRESH_TAG = "janice/full_refresh"
+FULL_REFRESH_WEEKDAY = 6  # Sunday (Monday is 0)
 TIMEZONE = "Africa/Nairobi"
 FINISHED = {
     dg.DagsterRunStatus.SUCCESS,
@@ -44,16 +48,21 @@ def build_nightly_schedule(projects: list[Project], *, running: bool) -> dg.Sche
         default_status=(
             dg.DefaultScheduleStatus.RUNNING if running else dg.DefaultScheduleStatus.STOPPED
         ),
-        description="Stage and load every registered project at 02:00 Nairobi time.",
+        description="Stage and load every registered project at 02:00 Nairobi time: "
+        "changes only on weeknights, everything on Sunday.",
     )
     def nightly_ingest(context: dg.ScheduleEvaluationContext):
-        night = context.scheduled_execution_time.date().isoformat()
+        when = context.scheduled_execution_time
+        night = when.date().isoformat()
+        full = when.weekday() == FULL_REFRESH_WEEKDAY
+        run_config = {"ops": {"redcap_staging": {"config": {"full_refresh": True}}}} if full else {}
         for project in projects:
             yield dg.RunRequest(
                 # Same key = same run, so a repeated tick never loads a project twice
                 run_key=f"{night}-{project.key}",
                 partition_key=project.key,
-                tags={NIGHTLY_TAG: night},
+                run_config=run_config,
+                tags={NIGHTLY_TAG: night, FULL_REFRESH_TAG: str(full).lower()},
             )
 
     return nightly_ingest
