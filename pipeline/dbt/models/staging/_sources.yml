@@ -1,0 +1,30 @@
+sources:
+  - name: raw
+    description: >
+      REDCap data loaded by the JANICE pipeline (Dagster asset warehouse_raw).
+      Identifiers are already hashed or dropped before they reach this schema.
+    schema: "{{ var('raw_schema', 'raw') }}"
+    tables:
+      - name: redcap_records
+        description: >
+          One row per REDCap record or repeat instance, for every project.
+          Fields are in the JSONB column data, with blank values left out.
+        columns:
+          - name: project
+            data_tests: [not_null]
+          - name: record_id
+            data_tests: [not_null]
+          - name: data
+            data_tests: [not_null]
+
+      - name: projects
+        description: Each project's settings dbt needs, written by the pipeline on every load.
+        columns:
+          - name: project
+            data_tests: [unique, not_null]
+          - name: site_field
+            description: The field in data that holds the project's site.
+            data_tests: [not_null]
+
+      - name: loads
+        description: One row per load, with record and row counts.

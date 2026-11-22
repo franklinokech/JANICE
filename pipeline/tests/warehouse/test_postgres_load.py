@@ -40,7 +40,9 @@ def test_every_row_is_loaded_with_its_project_and_record_id(tmp_path, warehouse)
     settings, schema, conn = warehouse
     staging = make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL)
 
-    result = load_project(staging, project_key="neonatal", settings=settings, schema=schema)
+    result = load_project(
+        staging, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     assert (result.records, result.rows) == (2, 2)
     rows = fetch(
@@ -55,7 +57,9 @@ def test_blank_values_are_left_out_of_the_data(tmp_path, warehouse):
     settings, schema, conn = warehouse
     staging = make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL)
 
-    load_project(staging, project_key="neonatal", settings=settings, schema=schema)
+    load_project(
+        staging, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     (data,) = fetch(conn, schema, "SELECT data FROM {schema}.redcap_records WHERE record_id = '2'")
     assert "weight" not in data[0]
@@ -85,7 +89,9 @@ def test_repeat_instances_are_separate_rows(tmp_path, warehouse):
     ]
     staging = make_staging(tmp_path / "s.duckdb", "maternity", rows)
 
-    result = load_project(staging, project_key="maternity", settings=settings, schema=schema)
+    result = load_project(
+        staging, project_key="maternity", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     assert (result.records, result.rows) == (1, 3)
     keys = fetch(
@@ -100,11 +106,17 @@ def test_a_reload_replaces_the_project_and_leaves_other_projects_alone(tmp_path,
     settings, schema, conn = warehouse
     neonatal = make_staging(tmp_path / "n.duckdb", "neonatal", NEONATAL)
     paeds = make_staging(tmp_path / "p.duckdb", "paediatrics", [{"record_id": "1", "a": "x"}])
-    load_project(neonatal, project_key="neonatal", settings=settings, schema=schema)
-    load_project(paeds, project_key="paediatrics", settings=settings, schema=schema)
+    load_project(
+        neonatal, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
+    load_project(
+        paeds, project_key="paediatrics", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     smaller = make_staging(tmp_path / "n2.duckdb", "neonatal", NEONATAL[:1])
-    load_project(smaller, project_key="neonatal", settings=settings, schema=schema)
+    load_project(
+        smaller, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     counts = fetch(
         conn,
@@ -117,12 +129,20 @@ def test_a_reload_replaces_the_project_and_leaves_other_projects_alone(tmp_path,
 def test_a_failed_load_leaves_the_previous_load_in_place(tmp_path, warehouse):
     settings, schema, conn = warehouse
     good = make_staging(tmp_path / "good.duckdb", "neonatal", NEONATAL)
-    load_project(good, project_key="neonatal", settings=settings, schema=schema)
+    load_project(
+        good, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     # The same record twice breaks the key, part-way through the load
     duplicated = make_staging(tmp_path / "bad.duckdb", "neonatal", [NEONATAL[0], NEONATAL[0]])
     with pytest.raises(Exception, match="duplicate key"):
-        load_project(duplicated, project_key="neonatal", settings=settings, schema=schema)
+        load_project(
+            duplicated,
+            project_key="neonatal",
+            settings=settings,
+            schema=schema,
+            site_field="hosp_id",
+        )
 
     # All or nothing: dashboards never see half a load
     assert fetch(conn, schema, "SELECT count(*) FROM {schema}.redcap_records") == [(2,)]
@@ -132,10 +152,34 @@ def test_each_load_is_recorded(tmp_path, warehouse):
     settings, schema, conn = warehouse
     staging = make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL)
 
-    load_project(staging, project_key="neonatal", settings=settings, schema=schema)
+    load_project(
+        staging, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
 
     assert fetch(conn, schema, "SELECT project, records, rows FROM {schema}.loads") == [
         ("neonatal", 2, 2)
+    ]
+
+
+def test_each_projects_site_field_is_recorded_for_dbt(tmp_path, warehouse):
+    # dbt reads raw.projects to know which field in data holds each project's site
+    settings, schema, conn = warehouse
+    neonatal = make_staging(tmp_path / "n.duckdb", "neonatal", NEONATAL)
+    other = make_staging(tmp_path / "k.duckdb", "kilifi_nbu", [{"record_id": "1", "fac": "K1"}])
+
+    load_project(
+        neonatal, project_key="neonatal", settings=settings, schema=schema, site_field="hosp_id"
+    )
+    load_project(
+        other, project_key="kilifi_nbu", settings=settings, schema=schema, site_field="fac"
+    )
+    load_project(
+        other, project_key="kilifi_nbu", settings=settings, schema=schema, site_field="fac2"
+    )
+
+    assert fetch(conn, schema, "SELECT project, site_field FROM {schema}.projects ORDER BY 1") == [
+        ("kilifi_nbu", "fac2"),
+        ("neonatal", "hosp_id"),
     ]
 
 
@@ -144,7 +188,9 @@ def test_a_missing_staging_table_is_reported_clearly(tmp_path, warehouse):
     staging = make_staging(tmp_path / "s.duckdb", "neonatal", NEONATAL)
 
     with pytest.raises(ValueError, match="raw_maternity"):
-        load_project(staging, project_key="maternity", settings=settings, schema=schema)
+        load_project(
+            staging, project_key="maternity", settings=settings, schema=schema, site_field="hosp_id"
+        )
 
 
 @pytest.mark.parametrize("project_key", ["Neonatal", "neonatal; DROP TABLE x"])
@@ -152,7 +198,9 @@ def test_unsafe_project_keys_are_refused(tmp_path, project_key):
     settings = PostgresSettings("localhost", 5432, "janice", "janice", "x")
 
     with pytest.raises(ValueError, match="project key"):
-        load_project(tmp_path / "s.duckdb", project_key=project_key, settings=settings)
+        load_project(
+            tmp_path / "s.duckdb", project_key=project_key, settings=settings, site_field="hosp_id"
+        )
 
 
 def test_unsafe_schema_names_are_refused(tmp_path):
@@ -160,7 +208,11 @@ def test_unsafe_schema_names_are_refused(tmp_path):
 
     with pytest.raises(ValueError, match="schema"):
         load_project(
-            tmp_path / "s.duckdb", project_key="neonatal", settings=settings, schema="raw; --"
+            tmp_path / "s.duckdb",
+            project_key="neonatal",
+            settings=settings,
+            schema="raw; --",
+            site_field="hosp_id",
         )
 
 

@@ -279,3 +279,8 @@ logs/
 .tmp_dagster_home_*/
 .dagster/
 dagster_home/
+
+# dbt build output (never committed)
+pipeline/dbt/target/
+pipeline/dbt/logs/
+pipeline/dbt/dbt_packages/

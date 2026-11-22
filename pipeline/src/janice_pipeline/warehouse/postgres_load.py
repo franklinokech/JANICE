@@ -8,7 +8,8 @@ change here; dbt picks the fields it needs out of ``data``.
 
 A load replaces one project's rows inside one transaction, so readers see the
 old rows or the new ones, never a mix, and other projects are untouched. Each
-load is recorded in <schema>.loads.
+load is recorded in <schema>.loads, and each project's settings that dbt needs
+(which field in ``data`` holds its site) are kept in <schema>.projects.
 
 Values arrive already hashed (staging hashes before writing), and blank values
 are left out of ``data``: REDCap exports a blank for "not filled in", and
@@ -90,9 +91,14 @@ def load_project(
     *,
     project_key: str,
     settings: PostgresSettings,
+    site_field: str,
     schema: str = DEFAULT_SCHEMA,
 ) -> LoadResult:
-    """Replace one project's rows in <schema>.redcap_records with its staging table."""
+    """Replace one project's rows in <schema>.redcap_records with its staging table.
+
+    ``site_field`` is recorded in <schema>.projects, so dbt can read each
+    project's site from the right field in ``data``.
+    """
     if not re.fullmatch(PROJECT_KEY_PATTERN, project_key):
         raise ValueError(f"Unsafe project key {project_key!r}")
     if not re.fullmatch(SCHEMA_PATTERN, schema):
@@ -138,6 +144,14 @@ def load_project(
                 ),
                 (project_key, len(records), rows),
             )
+            pg.execute(
+                sql.SQL(
+                    "INSERT INTO {}.projects (project, site_field) VALUES (%s, %s) "
+                    "ON CONFLICT (project) DO UPDATE "
+                    "SET site_field = EXCLUDED.site_field, updated_at = now()"
+                ).format(sql.Identifier(schema)),
+                (project_key, site_field),
+            )
 
     return LoadResult(project=project_key, records=len(records), rows=rows)
 
@@ -171,6 +185,17 @@ def _ensure_tables(pg: psycopg.Connection, schema: str) -> None:
                 records   integer     NOT NULL,
                 rows      integer     NOT NULL,
                 loaded_at timestamptz NOT NULL DEFAULT now()
+            )
+            """
+        ).format(name)
+    )
+    pg.execute(
+        sql.SQL(
+            """
+            CREATE TABLE IF NOT EXISTS {}.projects (
+                project    text        PRIMARY KEY,
+                site_field text        NOT NULL,
+                updated_at timestamptz NOT NULL DEFAULT now()
             )
             """
         ).format(name)

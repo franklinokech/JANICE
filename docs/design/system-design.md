@@ -219,7 +219,7 @@ dbt turns raw REDCap tables into one governed table of QI indicators per site, u
 
 | Layer | Schema | Contents | Example models |
 | --- | --- | --- | --- |
-| Staging | `stg` | One model per REDCap form: rename, cast types, decode choice codes using the ingested data dictionary | `stg_neonatal_admission`, `stg_maternity_delivery` |
+| Staging | `stg` | A base view, stg\_redcap\_\_records, gives every REDCap row of every project a record key (project:record\_id) and a site (read from the field raw.projects names, carried to repeat instances); a build fails if a record has no site or two. Per-project models on top pick fields out of the JSONB data, cast types and decode choice codes using the ingested data dictionary | `stg_neonatal_admission`, `stg_maternity_delivery` |
 | Intermediate | `int` | Joined, cleaned admission episodes with derived flags | `int_admissions`, `int_neonatal_outcomes` |
 | Marts | `marts` | Facts and dimensions for analysis | `fct_admissions`, `dim_site`, `dim_unit`, `dim_month` |
 | Indicators | `qi` | Pre-aggregated numerator, denominator and completeness per indicator, site, unit and month | `fct_indicator_monthly` |

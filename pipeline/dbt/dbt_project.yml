@@ -1,0 +1,29 @@
+# JANICE warehouse models. Docs: https://docs.getdbt.com
+#
+# Layers (schemas): raw (loaded by the pipeline) -> stg (one tidy view per
+# REDCap row) -> later int, marts and qi (the indicators).
+name: janice
+version: "0.1.0"
+profile: janice
+
+model-paths: [models]
+macro-paths: [macros]
+test-paths: [tests]
+target-path: target
+clean-targets: [target, dbt_packages, logs]
+
+flags:
+  # Health data project: dbt must not send usage statistics anywhere
+  send_anonymous_usage_stats: false
+
+vars:
+  # Where the pipeline loads REDCap data (tests point this at a throwaway schema)
+  raw_schema: raw
+  # Prefix for every schema dbt builds; empty in real environments, set by tests
+  schema_prefix: ""
+
+models:
+  janice:
+    staging:
+      +schema: stg
+      +materialized: view
