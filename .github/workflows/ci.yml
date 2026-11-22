@@ -170,6 +170,29 @@ jobs:
   pipeline:
     name: Pipeline tests
     runs-on: ubuntu-24.04
+    services:
+      db:
+        image: postgres:18
+        env:
+          POSTGRES_DB: janice
+          POSTGRES_USER: janice
+          POSTGRES_PASSWORD: ci-only-not-a-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U janice -d janice"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      POSTGRES_DB: janice
+      POSTGRES_USER: janice
+      POSTGRES_PASSWORD: ci-only-not-a-secret
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      # The warehouse tests skip when Postgres is unreachable; in CI that
+      # must be a failure, so they can never be skipped by accident
+      JANICE_REQUIRE_POSTGRES: "1"
     defaults:
       run:
         working-directory: pipeline
