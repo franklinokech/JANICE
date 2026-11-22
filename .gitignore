@@ -274,3 +274,8 @@ logs/
 .vscode/
 .idea/
 .DS_Store
+
+# Dagster local state: run history, logs and storage (never committed)
+.tmp_dagster_home_*/
+.dagster/
+dagster_home/
