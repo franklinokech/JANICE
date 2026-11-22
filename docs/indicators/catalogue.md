@@ -6,6 +6,7 @@ Every QI indicator JANICE computes. Each page is the indicator's definition, gen
 
 | Indicator | Unit | Type | Direction | Version | Status |
 | --- | --- | --- | --- | --- | --- |
+| [Antenatal corticosteroids for preterm babies](neo_antenatal_steroids_preterm.md) | Neonatal | process | higher | 1.0 | Draft |
 | [Neonatal case fatality by birth-weight band](neo_cfr_birth_weight.md) | Neonatal | outcome | lower | 1.0 | Draft |
 | [Hypothermia on admission](neo_hypothermia_admission.md) | Neonatal | process and outcome | lower | 1.0 | Draft |
 | [Kangaroo mother care for babies under 2000 g](neo_kmc_under_2000g.md) | Neonatal | process | higher | 1.0 | Draft |

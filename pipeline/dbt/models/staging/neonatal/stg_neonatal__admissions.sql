@@ -34,6 +34,8 @@ select
     -- Baby
     {{ redcap_weight_g('birth_wt', 'birth_wt_units') }} as birth_weight_g,
     {{ redcap_number('gest') }} as gestation_weeks,
+    -- "Born outside this facility?" 1 = yes, 0 = no
+    {{ redcap_yes('bba') }} as born_outside,
 
     -- Admission examination
     {{ redcap_number('temperature_degrees_celciu') }} as admission_temp_c,
